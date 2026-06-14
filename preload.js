@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld('api', {
   setLibraryPath:     ()            => ipcRenderer.invoke('set-library-path'),
   pickAndIngest:      ()            => ipcRenderer.invoke('pick-and-ingest'),
   listArticles:       ()            => ipcRenderer.invoke('list-articles'),
+  getStats:           ()            => ipcRenderer.invoke('get-stats'),
   readArticleHtml:    (id)          => ipcRenderer.invoke('read-article-html', id),
   articleBase:        (id)          => ipcRenderer.invoke('article-base', id),
   readMeta:           (id)          => ipcRenderer.invoke('read-meta', id),

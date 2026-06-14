@@ -85,6 +85,16 @@
   .tag.mini { cursor: default; padding: 1px 8px; font-size: 9px; }
   .tag.mini:hover { border-color: var(--line-strong); color: var(--ink-2); }
 
+  /* library greeting + stats */
+  .lib-greeting { font-family: var(--serif); font-style: italic; font-size: 23px; line-height: 1.2; color: var(--ink-3); margin-bottom: 20px; letter-spacing: 0.01em; }
+  .stats-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 6px 0 32px; }
+  @media (max-width: 720px) { .stats-grid { grid-template-columns: repeat(2, 1fr); } }
+  .stat-card { position: relative; background: var(--surface); border: 1px solid var(--line-faint); border-radius: 18px; padding: 18px 18px 16px; min-height: 112px; display: flex; flex-direction: column; justify-content: flex-end; transition: border-color 140ms; }
+  .stat-card:hover { border-color: var(--line); }
+  .stat-card .ico { position: absolute; top: 16px; left: 18px; color: var(--ink-3); }
+  .stat-card .val { font-size: 29px; font-weight: 700; letter-spacing: -0.025em; line-height: 1.05; font-variant-numeric: tabular-nums; }
+  .stat-card .lbl { font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-4); margin-top: 7px; }
+
   /* library list */
   .lib-list { list-style: none; }
   .lib-row { display: grid; grid-template-columns: 46px 1fr auto; gap: 16px; align-items: center; padding: 16px 6px; border-bottom: 1px solid var(--line); cursor: pointer; transition: padding 120ms, background 120ms; }
@@ -245,6 +255,7 @@
 
   <!-- LIBRARY -->
   <section class="view active" id="view-library">
+    <div class="lib-greeting" id="libGreeting">Pause, read, reflect.</div>
     <div class="view-head">
       <div>
         <div class="view-label">Collection</div>
@@ -253,6 +264,7 @@
       </div>
       <button class="btn" id="addBtn">＋ Add document</button>
     </div>
+    <div class="stats-grid" id="libStats"></div>
     <div class="tag-bar" id="libTagBar"></div>
     <ul class="lib-list" id="libList"></ul>
   </section>
@@ -368,6 +380,29 @@ async function loadLibrary() {
   articles = await api.listArticles();
   renderTagBar();
   renderLibrary();
+  renderStats();
+}
+
+const STAT_ICONS = {
+  read: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 6c-2-1.3-4.6-1.3-7-.3v12c2.4-1 5-1 7 .3 2-1.3 4.6-1.3 7-.3v-12c-2.4-1-5-1-7 .3z"/><path d="M12 6v12"/></svg>`,
+  spent: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4h10M7 20h10"/><path d="M7.5 4c0 4 4.5 5 4.5 8s-4.5 4-4.5 8M16.5 4c0 4-4.5 5-4.5 8s4.5 4 4.5 8"/></svg>`,
+  hl: `<svg width="22" height="22" viewBox="0 0 24 24"><rect x="4" y="7" width="16" height="4" rx="2" fill="currentColor" opacity="0.9"/><rect x="4" y="14" width="10" height="3" rx="1.5" fill="currentColor" opacity="0.4"/></svg>`,
+  note: `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M5 5h14v10H9l-4 4z"/></svg>`
+};
+async function renderStats() {
+  const el = $('#libStats');
+  const s = await api.getStats();
+  if (!s || !s.count) { el.style.display = 'none'; el.innerHTML = ''; return; }
+  el.style.display = '';
+  const cards = [
+    ['read', 'Content saved', fmtMins(s.readMinutes)],
+    ['spent', 'Time read', fmtMins(Math.round(s.spentSeconds / 60))],
+    ['hl', 'Highlights', String(s.highlights)],
+    ['note', 'Comments', String(s.comments)]
+  ];
+  el.innerHTML = cards.map(([k, lbl, val]) =>
+    `<div class="stat-card"><span class="ico">${STAT_ICONS[k]}</span><span class="val">${val}</span><span class="lbl">${lbl}</span></div>`
+  ).join('');
 }
 
 function renderTagBar() {
@@ -390,6 +425,7 @@ function renderTagBar() {
 
 function renderLibrary() {
   const list = $('#libList');
+  $('#libGreeting').style.display = articles.length ? '' : 'none';
   const shown = articles.filter(a => activeTags.every(t => (a.tags || []).includes(t)));
   $('#libSummary').textContent = `${articles.length} ${articles.length === 1 ? 'article' : 'articles'}` +
     (activeTags.length ? ` · ${shown.length} shown` : '');

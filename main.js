@@ -389,6 +389,28 @@ ipcMain.handle('pick-and-ingest', async (event) => {
 
 ipcMain.handle('list-articles', () => listArticles());
 
+ipcMain.handle('get-stats', () => {
+  ensureStore();
+  const dir = articlesDir();
+  let count = 0, readMinutes = 0, spentSeconds = 0, highlights = 0, comments = 0;
+  for (const name of fs.readdirSync(dir)) {
+    try {
+      const meta = JSON.parse(fs.readFileSync(path.join(dir, name, 'meta.json'), 'utf-8'));
+      count++;
+      readMinutes += meta.readMinutes || 0;
+      spentSeconds += meta.timeSpentSeconds || 0;
+    } catch {}
+    try {
+      const ann = JSON.parse(fs.readFileSync(path.join(dir, name, 'annotations.json'), 'utf-8'));
+      for (const a of ann.textAnnotations || []) {
+        if (a.type === 'comment') comments++; else highlights++;
+      }
+      comments += (ann.imageAnnotations || []).length; // image notes are comments too
+    } catch {}
+  }
+  return { count, readMinutes, spentSeconds, highlights, comments };
+});
+
 ipcMain.handle('read-article-html', (_, id) => {
   const fp = path.join(articlesDir(), id, 'article.html');
   return fs.existsSync(fp) ? fs.readFileSync(fp, 'utf-8') : '';
