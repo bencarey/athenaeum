@@ -5,3 +5,7 @@ resources/pyenv/
 *.dmg
 *.asar
 .DS_Store
+
+# Python
+__pycache__/
+*.pyc
