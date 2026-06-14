@@ -1,6 +1,6 @@
 {
   "name": "athenaeum",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Athenaeum — a knowledge container",
   "main": "main.js",
   "scripts": {
