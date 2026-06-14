@@ -19,12 +19,22 @@ case "$(uname -m)" in
   *) echo "Unsupported architecture $(uname -m)" >&2; exit 1 ;;
 esac
 
+# Authenticate API calls when a token is available (CI), so shared-runner IPs
+# don't hit the 60/hr unauthenticated GitHub API rate limit.
+gh_api() {
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" "$1" 2>/dev/null
+  else
+    curl -fsSL "$1" 2>/dev/null
+  fi
+}
+
 echo "Resolving latest python-build-standalone release..."
-TAG="$(curl -fsSL https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest 2>/dev/null \
+TAG="$(gh_api https://api.github.com/repos/astral-sh/python-build-standalone/releases/latest \
   | grep -m1 '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')"
 [ -n "$TAG" ] || { echo "Could not resolve release tag" >&2; exit 1; }
 
-URL="$(curl -fsSL "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/$TAG" 2>/dev/null \
+URL="$(gh_api "https://api.github.com/repos/astral-sh/python-build-standalone/releases/tags/$TAG" \
   | grep -oE "https://[^\"]*cpython-${PYVER}\.[0-9]+%2B${TAG}-${PBS_ARCH}-install_only\.tar\.gz" | head -1)"
 [ -n "$URL" ] || { echo "Could not find a CPython $PYVER asset for $PBS_ARCH in $TAG" >&2; exit 1; }
 

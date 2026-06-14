@@ -23,6 +23,8 @@ jobs:
 
       - name: Build portable Python (PDF support)
         run: npm run setup
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build DMG
         run: npm run build:mac
