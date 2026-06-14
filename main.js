@@ -127,11 +127,16 @@ function normalizeFragment(rawHtml) {
   });
 
   // tag footnotes / citations (a small number then a quote or capital) so they
-  // render smaller and lighter, distinct from body text
+  // render smaller and lighter, distinct from body text; ensure a space after
+  // the leading number ("7Hannah" -> "7 Hannah")
   doc.querySelectorAll('blockquote, p').forEach((el) => {
     const t = el.textContent.trim();
-    if (/^\d{1,2}(["“'']|[A-Z])/.test(t) && (el.tagName === 'BLOCKQUOTE' || t.length < 260)) {
+    if (/^\d{1,2}(["“'']|[A-Z])/.test(t) && (el.tagName === 'BLOCKQUOTE' || t.length < 400)) {
       el.classList.add('cite');
+      const first = el.firstChild;
+      if (first && first.nodeType === 3) {
+        first.nodeValue = first.nodeValue.replace(/^(\s*)(\d{1,2})(?=["“''’A-Za-z])/, '$1$2 ');
+      }
     }
   });
 

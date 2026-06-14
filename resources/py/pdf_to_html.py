@@ -196,25 +196,26 @@ def clean_raster_labels(page, fitz):
             continue
         if a > 0.45 * parea or ir.width > 0.9 * pw or ir.height > 0.85 * ph:
             continue
-        grown = (ir + (-18, -18, 18, 18)) & page.rect
+        grown = (ir + (-20, -10, 20, 34)) & page.rect  # mostly downward (footnotes below)
         for b in blocks:
             if b.get("type") != 0:
                 continue
             bb = fitz.Rect(b["bbox"])
-            if bb.height > 26:
-                continue
-            txt = "".join(s["text"] for ln in b.get("lines", []) for s in ln.get("spans", [])).strip()
-            if len(txt) > 36:  # labels are short; longer means body text
-                continue
-            sizes = [s["size"] for ln in b.get("lines", []) for s in ln.get("spans", [])]
-            if not sizes or sum(sizes) / len(sizes) > 12:
-                continue
             if not grown.intersects(bb):
                 continue
-            inter = bb & grown
-            if abs(inter.width * inter.height) < 0.5 * (abs(bb.width * bb.height) or 1):
+            sizes = [s["size"] for ln in b.get("lines", []) for s in ln.get("spans", [])]
+            if not sizes or sum(sizes) / len(sizes) > 12:  # small font only
                 continue
-            annots.append(bb)
+            txt = "".join(s["text"] for ln in b.get("lines", []) for s in ln.get("spans", [])).strip()
+            bb_area = abs(bb.width * bb.height) or 1
+            inside = abs((bb & ir).width * (bb & ir).height) / bb_area
+            is_caption = bool(re.match(r"^(Note\s*\d|Source[:\s]|Exhibit|\d[\d\s,.%$–-]*$)", txt))
+            if inside > 0.5:                                    # overlaid on the chart
+                annots.append(bb)
+            elif bb.height <= 26 and len(txt) <= 40:            # short label in the margin
+                annots.append(bb)
+            elif is_caption and len(txt) < 420:                # chart caption / footnote
+                annots.append(bb)
     for a in annots:
         page.add_redact_annot(a, fill=(1, 1, 1))
     if annots:
