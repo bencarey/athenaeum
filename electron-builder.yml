@@ -1,0 +1,24 @@
+appId: com.bencarey.athenaeum
+productName: Athenaeum
+directories:
+  output: dist
+  buildResources: build
+files:
+  - main.js
+  - preload.js
+  - reader.html
+  - package.json
+  - "!resources/pyenv/**/__pycache__/**"
+extraResources:
+  - from: resources/pyenv
+    to: pyenv
+  - from: resources/py
+    to: py
+mac:
+  category: public.app-category.productivity
+  target:
+    - dmg
+  hardenedRuntime: true
+  gatekeeperAssess: false
+dmg:
+  title: Athenaeum

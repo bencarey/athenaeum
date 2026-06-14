@@ -1,0 +1,989 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Athenaeum</title>
+<script>
+  (function () {
+    try {
+      var p = JSON.parse(localStorage.getItem('athenaeum.prefs.v1') || '{}');
+      var t = p.theme || (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+      document.documentElement.dataset.theme = t;
+    } catch (e) {}
+  })();
+</script>
+<style>
+  :root {
+    color-scheme: light;
+    --ground: #F1F2F4; --surface: #FFFFFF; --surface-2: #FAFBFC; --read-bg: #FAFBFC;
+    --ink: #111111; --ink-max: #000000; --ink-2: #3A3A3C; --ink-3: #6E6E73; --ink-4: #A1A1A6;
+    --line: #D1D2D4; --line-strong: #AFB0B0; --line-faint: #E7E8EA;
+    --mark: rgba(17,17,17,0.10); --mark-strong: rgba(17,17,17,0.20);
+    --on-ink: #FFFFFF;
+    --sans: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
+    --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --ground: #161718; --surface: #1E1F21; --surface-2: #242527; --read-bg: #1D1E20;
+    --ink: #ECECEE; --ink-max: #FFFFFF; --ink-2: #C7C7C9; --ink-3: #9A9A9D; --ink-4: #6A6A6D;
+    --line: #34363A; --line-strong: #4C4E52; --line-faint: #2A2B2D;
+    --mark: rgba(255,255,255,0.13); --mark-strong: rgba(255,255,255,0.26);
+    --on-ink: #161718;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--ground); color: var(--ink); font-family: var(--sans); font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased; transition: background 160ms; }
+  body.reading { background: var(--read-bg); }
+  body { min-height: 100vh; }
+  .drag-bar { position: fixed; top: 0; left: 80px; right: 0; height: 38px; -webkit-app-region: drag; z-index: 9990; pointer-events: none; }
+  button { font: inherit; }
+
+  .frame { max-width: 920px; margin: 0 auto; padding: 38px 32px 96px; }
+
+  /* topbar */
+  .topbar { display: grid; grid-template-columns: 1fr auto; align-items: center; padding-bottom: 18px; border-bottom: 1px solid var(--line-strong); margin-bottom: 26px; }
+  .brand { display: flex; align-items: baseline; gap: 12px; -webkit-app-region: no-drag; }
+  .wordmark { font-size: 19px; font-weight: 700; letter-spacing: -0.03em; }
+  .wordmark::after { content: "."; }
+  .brand .sub { font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-4); }
+  .topbar-meta { display: flex; align-items: center; gap: 16px; font-size: 11px; color: var(--ink-3); letter-spacing: 0.03em; font-variant-numeric: tabular-nums; -webkit-app-region: no-drag; }
+  .save-dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--ink-4); margin-right: 6px; vertical-align: middle; }
+  .save-dot.dirty { background: var(--ink); }
+  .save-dot.error { background: #c2403a; }
+  .lib-pill { font-family: var(--mono); font-size: 10px; color: var(--ink-4); cursor: pointer; }
+  .lib-pill:hover { color: var(--ink); }
+  .theme-toggle { background: none; border: none; cursor: pointer; color: var(--ink-3); font-size: 16px; line-height: 1; padding: 2px; }
+  .theme-toggle:hover { color: var(--ink); }
+
+  nav { display: flex; gap: 26px; border-bottom: 1px solid var(--line); margin-bottom: 34px; }
+  nav button { background: none; border: none; font-size: 11px; font-weight: 500; letter-spacing: 0.12em; text-transform: uppercase; color: var(--ink-3); cursor: pointer; padding: 11px 0; margin-bottom: -1px; border-bottom: 1px solid transparent; transition: color 120ms, border-color 120ms; }
+  nav button:hover { color: var(--ink); }
+  nav button.active { color: var(--ink); border-bottom-color: var(--ink); }
+
+  .view { display: none; }
+  .view.active { display: block; }
+
+  .view-head { display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: end; margin-bottom: 22px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+  .view-label { font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 7px; }
+  .view-title { font-size: 30px; font-weight: 700; letter-spacing: -0.025em; line-height: 1.05; }
+  .view-summary { font-size: 11px; color: var(--ink-4); letter-spacing: 0.03em; margin-top: 7px; }
+
+  .btn { height: 32px; padding: 0 16px; border: none; background: var(--ink-max); color: var(--on-ink); font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; border-radius: 999px; transition: opacity 120ms; }
+  .btn:hover { opacity: 0.82; }
+  .btn--outline { background: transparent; color: var(--ink-2); border: 1px solid var(--line-strong); }
+  .btn--outline:hover { color: var(--ink); border-color: var(--ink); opacity: 1; }
+  .btn--ghost { background: none; border: none; color: var(--ink-3); padding: 0; height: auto; letter-spacing: 0.1em; }
+  .btn--ghost:hover { color: var(--ink); }
+
+  /* tag filter */
+  .tag-bar { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 22px; min-height: 4px; }
+  .tag { display: inline-flex; align-items: center; font-size: 10px; font-weight: 500; letter-spacing: 0.04em; padding: 3px 10px; border: 1px solid var(--line-strong); color: var(--ink-2); border-radius: 999px; cursor: pointer; user-select: none; background: transparent; }
+  .tag:hover { border-color: var(--ink); color: var(--ink); }
+  .tag.active { background: var(--ink-max); color: var(--on-ink); border-color: var(--ink-max); }
+  .tag.mini { cursor: default; padding: 1px 8px; font-size: 9px; }
+  .tag.mini:hover { border-color: var(--line-strong); color: var(--ink-2); }
+
+  /* library list */
+  .lib-list { list-style: none; }
+  .lib-row { display: grid; grid-template-columns: 46px 1fr auto; gap: 16px; align-items: center; padding: 16px 6px; border-bottom: 1px solid var(--line); cursor: pointer; transition: padding 120ms, background 120ms; }
+  .lib-row:hover { background: var(--surface); padding-left: 12px; }
+  .src-glyph { font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.08em; color: var(--ink-3); border: 1px solid var(--line-strong); border-radius: 4px; padding: 5px 0; text-align: center; }
+  .lib-main .title { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
+  .lib-main .tags { display: inline-flex; gap: 5px; margin-left: 8px; vertical-align: middle; }
+  .lib-meta { text-align: right; font-size: 11px; color: var(--ink-4); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; line-height: 1.5; }
+  .lib-meta .progress { display: inline-block; width: 70px; height: 3px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; }
+  .lib-meta .progress span { display: block; height: 100%; background: var(--ink-3); }
+  .empty { padding: 60px 0; text-align: center; color: var(--ink-3); }
+  .empty .mark { margin: 0 auto 22px; display: block; }
+  .empty p { font-size: 14px; margin-bottom: 22px; color: var(--ink-3); }
+
+  /* reader */
+  #view-reader .reader-head { display: grid; grid-template-columns: 1fr auto; gap: 20px; align-items: start; margin-bottom: 8px; padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+  .reader-title { font-size: 27px; font-weight: 700; letter-spacing: -0.025em; line-height: 1.12; outline: none; }
+  .reader-title:focus { color: var(--ink-max); }
+  .reader-sub { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; font-size: 11px; color: var(--ink-4); letter-spacing: 0.04em; font-variant-numeric: tabular-nums; text-transform: uppercase; }
+  .reader-actions { display: flex; gap: 14px; align-items: center; }
+
+  /* rating */
+  .rating-row { display: flex; align-items: center; gap: 14px; margin-top: 16px; }
+  .rating-label { font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-3); }
+  .rating { display: inline-flex; align-items: center; gap: 9px; }
+  .rating .zero { font-size: 10px; letter-spacing: 0.08em; color: var(--ink-4); cursor: pointer; font-variant-numeric: tabular-nums; }
+  .rating .zero.on { color: var(--ink); font-weight: 700; }
+  .rating .zero:hover { color: var(--ink); }
+  .rating .ticks { display: inline-flex; gap: 3px; }
+  .rating .tk { width: 13px; height: 8px; background: var(--line); border-radius: 1px; cursor: pointer; transition: background 90ms; }
+  .rating .tk.on { background: var(--ink); }
+  .rating .tk.preview { background: var(--ink-3); }
+  .rating .val { font-size: 11px; color: var(--ink-3); letter-spacing: 0.04em; font-variant-numeric: tabular-nums; min-width: 56px; }
+  .rating .clear { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-4); cursor: pointer; }
+  .rating .clear:hover { color: var(--ink); }
+
+  /* rating in library row */
+  .rate-line { display: flex; align-items: center; justify-content: flex-end; gap: 6px; margin-bottom: 5px; }
+  .rate-ticks { display: inline-flex; gap: 2px; }
+  .rate-ticks i { width: 5px; height: 5px; background: var(--line); border-radius: 1px; }
+  .rate-ticks i.on { background: var(--ink); }
+  .rate-line b { font-weight: 600; color: var(--ink); }
+
+  .reader-grid { display: grid; grid-template-columns: minmax(0,1fr) 250px; gap: 30px; margin-top: 30px; align-items: start; }
+  @media (max-width: 860px) { .reader-grid { grid-template-columns: 1fr; } .rail { display: none; } }
+
+  /* wide mode: break the reader out of the centered frame to ~90% of the window */
+  #view-reader.wide { width: 90vw; margin-left: 50%; transform: translateX(-50%); }
+  #view-reader.wide .prose { max-width: none; }
+  #view-reader.wide .reader-grid { grid-template-columns: minmax(0,1fr) 300px; gap: 48px; }
+
+  /* article prose */
+  .prose { max-width: 680px; font-size: 17px; line-height: 1.65; color: var(--ink); }
+  .prose h1 { font-size: 1.7em; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; margin: 1.6em 0 0.5em; }
+  .prose h2 { font-size: 1.35em; font-weight: 700; letter-spacing: -0.015em; margin: 1.5em 0 0.5em; }
+  .prose h3 { font-size: 1.12em; font-weight: 700; margin: 1.3em 0 0.4em; }
+  .prose h1:first-child, .prose h2:first-child { margin-top: 0; }
+  .prose p { margin: 0 0 1.05em; }
+  .prose ul, .prose ol { margin: 0 0 1.1em 1.3em; }
+  .prose li { margin: 0.3em 0; }
+  .prose blockquote { margin: 1.3em 0; padding-left: 18px; border-left: 2px solid var(--line-strong); color: var(--ink-2); font-style: italic; }
+  .prose a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--ink-4); text-underline-offset: 2px; }
+  .prose code { font-family: var(--mono); font-size: 0.86em; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+  .prose pre { background: var(--surface-2); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; overflow: auto; margin: 1.2em 0; }
+  .prose pre code { background: none; padding: 0; }
+  .prose hr { border: none; border-top: 1px solid var(--line); margin: 2em 0; }
+  .prose table { border-collapse: collapse; width: 100%; margin: 1.4em 0; font-size: 0.9em; font-variant-numeric: tabular-nums; display: block; overflow-x: auto; }
+  .prose th, .prose td { text-align: left; padding: 8px 14px 8px 0; border-bottom: 1px solid var(--line); }
+  .prose thead th { border-bottom: 2px solid var(--line-strong); font-weight: 600; font-size: 0.85em; letter-spacing: 0.02em; text-transform: uppercase; color: var(--ink-3); }
+  .prose figure { margin: 1.6em 0; position: relative; }
+  .prose figure img { max-width: 100%; height: auto; display: block; border: 1px solid var(--line-faint); border-radius: 4px; }
+  .prose figcaption { font-size: 0.8em; color: var(--ink-4); margin-top: 8px; letter-spacing: 0.02em; }
+  .prose img { cursor: crosshair; }
+
+  /* highlights */
+  mark.hl { background: var(--mark); color: inherit; border-radius: 2px; padding: 0.05em 0; box-decoration-break: clone; -webkit-box-decoration-break: clone; cursor: pointer; }
+  mark.hl[data-comment="1"] { box-shadow: inset 0 -2px 0 var(--ink-3); background: var(--mark); }
+  mark.hl.overlap { background: var(--mark-strong); }
+  mark.hl.focus { background: var(--mark-strong); box-shadow: inset 0 -2px 0 var(--ink); }
+
+  /* comment rail */
+  .rail { position: relative; }
+  .rail-empty { font-size: 11px; color: var(--ink-4); letter-spacing: 0.04em; }
+  .ccard { border: 1px solid var(--line); background: var(--surface); border-radius: 8px; padding: 11px 13px; margin-bottom: 12px; cursor: pointer; transition: border-color 120ms; }
+  .ccard:hover, .ccard.focus { border-color: var(--ink); }
+  .ccard .q { font-size: 11px; color: var(--ink-3); font-style: italic; border-left: 2px solid var(--line-strong); padding-left: 8px; margin-bottom: 7px; line-height: 1.45; }
+  .ccard .body { font-size: 13px; color: var(--ink); line-height: 1.5; white-space: pre-wrap; }
+  .ccard .cmeta { display: flex; justify-content: space-between; margin-top: 9px; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; color: var(--ink-4); }
+  .ccard .cmeta button { background: none; border: none; color: var(--ink-4); cursor: pointer; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; }
+  .ccard .cmeta button:hover { color: var(--ink); }
+  .ccard.orphan { border-style: dashed; opacity: 0.7; }
+
+  /* image pins */
+  .img-wrap { position: relative; display: inline-block; max-width: 100%; }
+  .pin { position: absolute; width: 20px; height: 20px; margin: -10px 0 0 -10px; border-radius: 50%; background: var(--ink-max); color: var(--on-ink); font-size: 10px; font-weight: 600; display: flex; align-items: center; justify-content: center; cursor: pointer; border: 2px solid var(--surface); }
+  .pin.badge { position: static; margin: 8px 8px 0 0; display: inline-flex; }
+
+  /* selection popover */
+  .popover { position: fixed; z-index: 500; background: var(--ink-max); color: var(--on-ink); border-radius: 8px; box-shadow: 0 6px 24px rgba(0,0,0,0.25); display: none; }
+  .popover.show { display: block; }
+  .popover .pbtns { display: flex; }
+  .popover .pbtns button { background: none; border: none; color: var(--on-ink); font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; padding: 9px 13px; cursor: pointer; opacity: 0.85; }
+  .popover .pbtns button:hover { opacity: 1; }
+  .popover .pbtns button + button { border-left: 1px solid rgba(255,255,255,0.15); }
+  .popover .composer { padding: 10px; width: 260px; }
+  .popover .composer textarea { width: 100%; min-height: 70px; resize: vertical; background: rgba(255,255,255,0.08); border: none; border-radius: 6px; color: var(--on-ink); padding: 8px 9px; font: inherit; font-size: 13px; outline: none; }
+  .popover .composer textarea::placeholder { color: rgba(255,255,255,0.5); }
+  .popover .composer .row { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+  .popover .composer .row button { background: none; border: none; color: var(--on-ink); font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; cursor: pointer; opacity: 0.8; }
+  .popover .composer .row button.primary { opacity: 1; }
+  .popover .composer .row button:hover { opacity: 1; }
+
+  /* quotes */
+  .q-composer { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 18px 20px; margin-bottom: 30px; }
+  .q-composer textarea { width: 100%; min-height: 64px; resize: vertical; border: none; background: transparent; font-family: var(--serif); font-size: 19px; line-height: 1.5; color: var(--ink); outline: none; }
+  .q-composer textarea::placeholder { color: var(--ink-4); font-style: italic; }
+  .q-composer .fields { display: flex; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+  .q-composer input { flex: 1; height: 30px; border: none; border-bottom: 1px solid var(--line); background: transparent; font: inherit; font-size: 13px; color: var(--ink); outline: none; padding: 0 2px; }
+  .q-composer input:focus { border-bottom-color: var(--ink); }
+  .q-composer input::placeholder { color: var(--ink-4); }
+  .q-search { width: 100%; height: 34px; border: none; border-bottom: 1px solid var(--line); background: transparent; font: inherit; font-size: 13px; color: var(--ink); outline: none; margin-bottom: 24px; }
+  .q-search:focus { border-bottom-color: var(--ink); }
+  .q-list { list-style: none; }
+  .q-item { padding: 22px 0; border-bottom: 1px solid var(--line); }
+  .q-item blockquote { font-family: var(--serif); font-size: 20px; line-height: 1.5; color: var(--ink); margin-bottom: 12px; }
+  .q-item .attr { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-3); display: flex; gap: 10px; align-items: center; }
+  .q-item .attr .author { font-weight: 600; color: var(--ink-2); }
+  .q-item:hover .del { opacity: 1; }
+  .q-item .del { margin-left: auto; opacity: 0; background: none; border: none; color: var(--ink-4); cursor: pointer; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; }
+  .q-item .del:hover { color: var(--ink); }
+
+  .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px); background: var(--ink-max); color: var(--on-ink); padding: 9px 18px; border-radius: 999px; font-size: 11px; letter-spacing: 0.06em; transition: transform 200ms ease; z-index: 600; }
+  .toast.show { transform: translateX(-50%) translateY(0); }
+
+  ::selection { background: var(--ink-max); color: var(--on-ink); }
+</style>
+</head>
+<body>
+<div class="drag-bar"></div>
+
+<div class="frame">
+  <header class="topbar">
+    <div class="brand">
+      <span class="wordmark">athenaeum</span>
+      <span class="sub">Knowledge</span>
+    </div>
+    <div class="topbar-meta">
+      <span class="lib-pill" id="libPill" title="Change library folder">⇄ iCloud</span>
+      <span><span class="save-dot" id="saveDot"></span><span id="saveStatus">Idle</span></span>
+      <button class="theme-toggle" id="themeToggle" title="Toggle theme">◐</button>
+    </div>
+  </header>
+
+  <nav>
+    <button class="nav-btn active" data-view="library">Library</button>
+    <button class="nav-btn" data-view="quotes">Quotes</button>
+  </nav>
+
+  <!-- LIBRARY -->
+  <section class="view active" id="view-library">
+    <div class="view-head">
+      <div>
+        <div class="view-label">Collection</div>
+        <div class="view-title">Library</div>
+        <div class="view-summary" id="libSummary"></div>
+      </div>
+      <button class="btn" id="addBtn">＋ Add document</button>
+    </div>
+    <div class="tag-bar" id="libTagBar"></div>
+    <ul class="lib-list" id="libList"></ul>
+  </section>
+
+  <!-- READER -->
+  <section class="view" id="view-reader">
+    <button class="btn--ghost" id="backBtn" style="margin-bottom:18px">← Library</button>
+    <div class="reader-head">
+      <div>
+        <div class="reader-title" id="readerTitle" contenteditable="true" spellcheck="false"></div>
+        <div class="reader-sub" id="readerSub"></div>
+      </div>
+      <div class="reader-actions">
+        <button class="btn--ghost" id="wideBtn">Wide</button>
+        <button class="btn--ghost" id="revealBtn">Original</button>
+        <button class="btn--ghost" id="deleteBtn">Delete</button>
+      </div>
+    </div>
+    <div class="rating-row">
+      <span class="rating-label">Rating</span>
+      <div class="rating" id="readerRating"></div>
+    </div>
+    <div class="reader-grid">
+      <article class="prose" id="articleBody"></article>
+      <aside class="rail" id="rail"></aside>
+    </div>
+  </section>
+
+  <!-- QUOTES -->
+  <section class="view" id="view-quotes">
+    <div class="view-head">
+      <div>
+        <div class="view-label">Commonplace</div>
+        <div class="view-title">Quotes</div>
+        <div class="view-summary" id="qSummary"></div>
+      </div>
+    </div>
+    <div class="q-composer">
+      <textarea id="qText" placeholder="A passage worth keeping…" rows="2"></textarea>
+      <div class="fields">
+        <input id="qSource" type="text" placeholder="Source">
+        <input id="qAuthor" type="text" placeholder="Author">
+        <button class="btn" id="qAdd">Save</button>
+      </div>
+    </div>
+    <input class="q-search" id="qSearch" type="text" placeholder="Search quotes, sources, authors…">
+    <ul class="q-list" id="qList"></ul>
+  </section>
+</div>
+
+<div class="popover" id="popover"></div>
+<div class="toast" id="toast"></div>
+
+<script>
+// `api` is injected as a global by preload.js (contextBridge). Use it directly.
+const $ = (s, r = document) => r.querySelector(s);
+const TAG_RE = /#([a-zA-Z][a-zA-Z0-9_-]*)/g;
+const SRC_GLYPH = { pdf: 'PDF', docx: 'DOC', html: 'WEB' };
+
+// ---------- prefs / theme ----------
+function loadPrefs() { try { return JSON.parse(localStorage.getItem('athenaeum.prefs.v1') || '{}'); } catch { return {}; } }
+function savePrefs(p) { localStorage.setItem('athenaeum.prefs.v1', JSON.stringify(p)); }
+$('#themeToggle').onclick = () => {
+  const cur = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = cur;
+  const p = loadPrefs(); p.theme = cur; savePrefs(p);
+};
+
+// ---------- toast ----------
+let toastT;
+function toast(msg) {
+  const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+  clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 2200);
+}
+
+// ---------- save dot ----------
+function setSave(state) {
+  const d = $('#saveDot'), s = $('#saveStatus');
+  d.className = 'save-dot' + (state === 'dirty' ? ' dirty' : state === 'error' ? ' error' : '');
+  s.textContent = state === 'dirty' ? 'Saving…' : state === 'error' ? 'Error' : 'Saved';
+}
+
+// ---------- helpers ----------
+function tagsFrom(s) { const o = []; let m; TAG_RE.lastIndex = 0; while ((m = TAG_RE.exec(s || '')) !== null) o.push(m[1]); return [...new Set(o)]; }
+function titleWithoutTags(s) { return (s || '').replace(TAG_RE, '').replace(/\s{2,}/g, ' ').trim(); }
+function fmtDate(iso) { try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }); } catch { return ''; } }
+function fmtMins(m) { if (!m) return '0 min'; if (m < 60) return m + ' min'; const h = Math.floor(m / 60); return h + 'h ' + (m % 60) + 'm'; }
+function fmtSpent(sec) { const m = Math.round((sec || 0) / 60); return m < 1 ? '<1 min' : fmtMins(m); }
+function esc(s) { return (s || '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+// ==================================================================
+// NAVIGATION
+// ==================================================================
+let articles = [];
+let activeTags = [];
+
+function showView(name) {
+  document.querySelectorAll('.view').forEach(v => v.classList.remove('active'));
+  $('#view-' + name).classList.add('active');
+  document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+  document.body.classList.toggle('reading', name === 'reader');
+}
+document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => {
+  if (currentReader) leaveReader();
+  showView(b.dataset.view);
+  if (b.dataset.view === 'quotes') renderQuotes();
+});
+
+// ==================================================================
+// LIBRARY
+// ==================================================================
+async function loadLibrary() {
+  articles = await api.listArticles();
+  renderTagBar();
+  renderLibrary();
+}
+
+function renderTagBar() {
+  const counts = {};
+  articles.forEach(a => (a.tags || []).forEach(t => counts[t] = (counts[t] || 0) + 1));
+  const tags = Object.keys(counts).sort();
+  const bar = $('#libTagBar');
+  bar.innerHTML = '';
+  tags.forEach(t => {
+    const el = document.createElement('span');
+    el.className = 'tag' + (activeTags.includes(t) ? ' active' : '');
+    el.textContent = '#' + t;
+    el.onclick = () => {
+      activeTags = activeTags.includes(t) ? activeTags.filter(x => x !== t) : [...activeTags, t];
+      renderTagBar(); renderLibrary();
+    };
+    bar.appendChild(el);
+  });
+}
+
+function renderLibrary() {
+  const list = $('#libList');
+  const shown = articles.filter(a => activeTags.every(t => (a.tags || []).includes(t)));
+  $('#libSummary').textContent = `${articles.length} ${articles.length === 1 ? 'article' : 'articles'}` +
+    (activeTags.length ? ` · ${shown.length} shown` : '');
+
+  if (!articles.length) {
+    list.innerHTML = `<div class="empty">
+      ${BOOK_SVG}
+      <p>Nothing in the library yet.<br>Add a PDF, Word, or HTML document to begin.</p>
+      <button class="btn" onclick="addDocuments()">＋ Add document</button></div>`;
+    return;
+  }
+  list.innerHTML = '';
+  shown.forEach(a => {
+    const li = document.createElement('li');
+    li.className = 'lib-row';
+    const pct = a.readMinutes ? Math.min(100, Math.round(((a.timeSpentSeconds || 0) / 60) / a.readMinutes * 100)) : 0;
+    const tagHtml = (a.tags || []).map(t => `<span class="tag mini">#${esc(t)}</span>`).join('');
+    const rated = a.rating !== null && a.rating !== undefined;
+    const rateHtml = rated
+      ? `<div class="rate-line"><span class="rate-ticks">${Array.from({ length: 10 }, (_, i) => `<i class="${i < a.rating ? 'on' : ''}"></i>`).join('')}</span> <b>${a.rating}</b>/10</div>`
+      : '';
+    li.innerHTML = `
+      <div class="src-glyph">${SRC_GLYPH[a.sourceType] || 'DOC'}</div>
+      <div class="lib-main">
+        <span class="title">${esc(titleWithoutTags(a.title)) || 'Untitled'}</span>
+        ${tagHtml ? `<span class="tags">${tagHtml}</span>` : ''}
+      </div>
+      <div class="lib-meta">
+        ${rateHtml}
+        ${fmtDate(a.ingestedAt)} · ${fmtMins(a.readMinutes)} read<br>
+        ${(a.timeSpentSeconds ? fmtSpent(a.timeSpentSeconds) + ' spent' : 'unread')}
+        <span class="progress"><span style="width:${pct}%"></span></span>
+      </div>`;
+    li.onclick = () => openReader(a.id);
+    list.appendChild(li);
+  });
+}
+
+$('#addBtn').onclick = addDocuments;
+$('#libPill').onclick = async () => { const c = await api.setLibraryPath(); refreshLibPill(c); loadLibrary(); };
+
+async function addDocuments() {
+  setSave('dirty');
+  const res = await api.pickAndIngest();
+  setSave('idle');
+  if (res.errors && res.errors.length) {
+    res.errors.forEach(e => toast(`${e.file}: ${e.message}`));
+  }
+  if (res.added && res.added.length) toast(`Added ${res.added.length} document${res.added.length > 1 ? 's' : ''}`);
+  await loadLibrary();
+}
+window.addDocuments = addDocuments;
+
+async function refreshLibPill(cfg) {
+  cfg = cfg || await api.getConfig();
+  const p = cfg.libraryPath || '';
+  $('#libPill').textContent = '⇄ ' + (p.includes('Mobile Documents') ? 'iCloud' : p.split('/').slice(-2).join('/'));
+  $('#libPill').title = p;
+}
+
+// ==================================================================
+// READER  +  ANNOTATIONS
+// ==================================================================
+let currentReader = null;   // { id, meta, annos, base }
+let readTimer = null, unflushed = 0;
+
+async function openReader(id) {
+  const meta = await api.readMeta(id);
+  const html = await api.readArticleHtml(id);
+  const annos = await api.readAnnotations(id);
+  const base = await api.articleBase(id);
+  currentReader = { id, meta, annos, base, dirty: false, saveT: null };
+
+  // header
+  $('#readerTitle').textContent = meta.title || 'Untitled';
+  renderReaderSub();
+  renderRating();
+
+  // body: rewrite relative image/asset urls to absolute file urls
+  const baseUrl = 'file://' + encodeURI(base.replace(/\\/g, '/'));
+  $('#articleBody').innerHTML = html.replace(/(src|href)="(?!https?:|file:|mailto:|#)([^"]+)"/g,
+    (_, attr, url) => `${attr}="${baseUrl}${url.replace(/^\.?\//, '')}"`);
+
+  prepareImages();
+  restoreHighlights();
+
+  showView('reader');
+  setWide(!!loadPrefs().wide, false);
+  renderRail();
+  renderImagePins();
+  startReadClock();
+}
+
+function setWide(wide, rerender) {
+  $('#view-reader').classList.toggle('wide', wide);
+  $('#wideBtn').textContent = wide ? 'Narrow' : 'Wide';
+  if (rerender && currentReader) { renderRail(); renderImagePins(); }
+}
+$('#wideBtn').onclick = () => {
+  const p = loadPrefs(); p.wide = !p.wide; savePrefs(p);
+  setWide(p.wide, true);
+};
+
+function renderReaderSub() {
+  const m = currentReader.meta;
+  $('#readerSub').innerHTML = [
+    `<span>${SRC_GLYPH[m.sourceType] || 'DOC'}</span>`,
+    `<span>${fmtDate(m.ingestedAt)}</span>`,
+    `<span>${m.wordCount.toLocaleString()} words</span>`,
+    `<span>${fmtMins(m.readMinutes)} read</span>`,
+    `<span>${fmtSpent(m.timeSpentSeconds)} spent</span>`,
+    m.pageCount ? `<span>${m.pageCount} pages</span>` : ''
+  ].filter(Boolean).join('');
+}
+
+// ---- rating (0-10) ----
+function renderRating() {
+  const el = $('#readerRating');
+  const r = currentReader.meta.rating; // null/undefined = unrated, else 0..10
+  const rated = r !== null && r !== undefined;
+  el.innerHTML = '';
+
+  const zero = document.createElement('span');
+  zero.className = 'zero' + (r === 0 ? ' on' : '');
+  zero.textContent = '0';
+  zero.title = 'Rate 0';
+  zero.onclick = () => setRating(0);
+  el.appendChild(zero);
+
+  const ticks = document.createElement('span');
+  ticks.className = 'ticks';
+  for (let i = 1; i <= 10; i++) {
+    const t = document.createElement('span');
+    t.className = 'tk' + (rated && i <= r ? ' on' : '');
+    t.dataset.n = i;
+    t.onmouseenter = () => [...ticks.children].forEach(c => c.classList.toggle('preview', +c.dataset.n <= i));
+    t.onclick = () => setRating(r === i ? 0 : i);
+    ticks.appendChild(t);
+  }
+  ticks.onmouseleave = () => [...ticks.children].forEach(c => c.classList.remove('preview'));
+  el.appendChild(ticks);
+
+  const val = document.createElement('span');
+  val.className = 'val';
+  val.textContent = rated ? r + ' / 10' : 'Unrated';
+  el.appendChild(val);
+
+  if (rated) {
+    const cl = document.createElement('span');
+    cl.className = 'clear';
+    cl.textContent = 'Clear';
+    cl.onclick = () => setRating(null);
+    el.appendChild(cl);
+  }
+}
+async function setRating(v) {
+  if (!currentReader) return;
+  currentReader.meta = await api.updateMeta(currentReader.id, { rating: v });
+  renderRating();
+}
+
+$('#backBtn').onclick = () => { leaveReader(); showView('library'); };
+$('#revealBtn').onclick = () => currentReader && api.revealOriginal(currentReader.id);
+$('#deleteBtn').onclick = async () => {
+  if (!currentReader) return;
+  if (!confirm('Delete this article and all its annotations?')) return;
+  await api.deleteArticle(currentReader.id);
+  leaveReader(); showView('library'); loadLibrary();
+};
+
+// rename / tag via editable title
+$('#readerTitle').addEventListener('blur', async () => {
+  if (!currentReader) return;
+  const t = $('#readerTitle').textContent.trim();
+  if (t && t !== currentReader.meta.title) {
+    currentReader.meta = await api.updateMeta(currentReader.id, { title: t });
+    renderReaderSub();
+  }
+});
+
+// ---- read clock ----
+function startReadClock() {
+  stopReadClock();
+  readTimer = setInterval(() => {
+    if (document.hasFocus() && document.visibilityState === 'visible' && currentReader) {
+      unflushed += 1;
+      if (unflushed >= 15) flushReadTime();
+    }
+  }, 1000);
+}
+function stopReadClock() { if (readTimer) { clearInterval(readTimer); readTimer = null; } }
+async function flushReadTime() {
+  if (!currentReader || unflushed <= 0) return;
+  const id = currentReader.id;
+  const secs = unflushed; unflushed = 0;
+  const total = await api.addReadTime(id, secs);
+  if (currentReader && currentReader.id === id) {
+    currentReader.meta.timeSpentSeconds = total;
+    renderReaderSub();
+  }
+}
+window.addEventListener('blur', flushReadTime);
+window.addEventListener('beforeunload', flushReadTime);
+
+function leaveReader() {
+  flushReadTime(); stopReadClock();
+  hidePopover();
+  currentReader = null;
+  loadLibrary();
+}
+
+// ---------- annotation persistence ----------
+function scheduleAnnoSave() {
+  if (!currentReader) return;
+  setSave('dirty');
+  clearTimeout(currentReader.saveT);
+  currentReader.saveT = setTimeout(async () => {
+    try { await api.writeAnnotations(currentReader.id, currentReader.annos); setSave('idle'); }
+    catch { setSave('error'); }
+  }, 400);
+}
+function uid(p) { return p + '_' + Math.random().toString(36).slice(2, 8) + Date.now().toString(36).slice(-4); }
+
+// ---------- text projection ----------
+function buildIndex(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let T = ''; const index = []; let n;
+  while ((n = walker.nextNode())) {
+    index.push({ node: n, start: T.length, end: T.length + n.nodeValue.length });
+    T += n.nodeValue;
+  }
+  return { T, index };
+}
+function projText(root) { return buildIndex(root).T; }
+function globalOffset(root, container, offset) {
+  const r = document.createRange();
+  r.setStart(root, 0);
+  r.setEnd(container, offset);
+  return r.toString().length;
+}
+function locate(index, off, isEnd) {
+  for (const e of index) {
+    if (isEnd) { if (off > e.start && off <= e.end) return { node: e.node, local: off - e.start }; }
+    else { if (off >= e.start && off < e.end) return { node: e.node, local: off - e.start }; }
+  }
+  // fallback to boundary
+  const last = index[index.length - 1];
+  if (last && off >= last.end) return { node: last.node, local: last.node.nodeValue.length };
+  const first = index[0];
+  return first ? { node: first.node, local: 0 } : null;
+}
+
+// ---------- anchor (de)serialization ----------
+function makeAnchor(root, range) {
+  const start = globalOffset(root, range.startContainer, range.startOffset);
+  const end = globalOffset(root, range.endContainer, range.endOffset);
+  const T = projText(root);
+  return {
+    exact: T.slice(start, end),
+    prefix: T.slice(Math.max(0, start - 32), start),
+    suffix: T.slice(end, Math.min(T.length, end + 32)),
+    start, end
+  };
+}
+function resolveAnchor(anchor, T) {
+  if (T.slice(anchor.start, anchor.end) === anchor.exact && anchor.exact) return { s: anchor.start, e: anchor.end };
+  if (!anchor.exact) return null;
+  // find all occurrences
+  const hits = [];
+  let i = T.indexOf(anchor.exact);
+  while (i !== -1) { hits.push(i); i = T.indexOf(anchor.exact, i + 1); }
+  if (hits.length === 1) return { s: hits[0], e: hits[0] + anchor.exact.length };
+  if (hits.length > 1) {
+    let best = hits[0], bestScore = -1;
+    for (const h of hits) {
+      const pre = T.slice(Math.max(0, h - 32), h);
+      const suf = T.slice(h + anchor.exact.length, h + anchor.exact.length + 32);
+      let score = 0;
+      while (score < pre.length && score < anchor.prefix.length &&
+             pre[pre.length - 1 - score] === anchor.prefix[anchor.prefix.length - 1 - score]) score++;
+      let s2 = 0;
+      while (s2 < suf.length && s2 < anchor.suffix.length && suf[s2] === anchor.suffix[s2]) s2++;
+      if (score + s2 > bestScore) { bestScore = score + s2; best = h; }
+    }
+    return { s: best, e: best + anchor.exact.length };
+  }
+  return null;
+}
+
+// ---------- render highlights ----------
+function clearMarks() {
+  const root = $('#articleBody');
+  root.querySelectorAll('mark.hl').forEach(m => { const p = m.parentNode; while (m.firstChild) p.insertBefore(m.firstChild, m); p.removeChild(m); });
+  root.normalize();
+}
+function restoreHighlights() {
+  clearMarks();
+  const root = $('#articleBody');
+  const T = projText(root);
+  const resolved = [];
+  currentReader.annos.textAnnotations.forEach(a => {
+    const r = resolveAnchor(a.anchor, T);
+    if (r) { a.orphaned = false; resolved.push({ id: a.id, s: r.s, e: r.e, type: a.type, hasComment: a.type === 'comment' }); }
+    else { a.orphaned = true; }
+  });
+  // build disjoint segments
+  const pts = new Set();
+  resolved.forEach(r => { pts.add(r.s); pts.add(r.e); });
+  const arr = [...pts].sort((x, y) => x - y);
+  const segs = [];
+  for (let i = 0; i < arr.length - 1; i++) {
+    const a = arr[i], b = arr[i + 1];
+    if (a >= b) continue;
+    const covering = resolved.filter(r => r.s <= a && r.e >= b);
+    if (covering.length) segs.push({ s: a, e: b, ids: covering.map(c => c.id), comment: covering.some(c => c.hasComment), overlap: covering.length > 1 });
+  }
+  // wrap right-to-left so earlier offsets stay valid (T invariant either way; rebuild index each)
+  segs.sort((x, y) => y.s - x.s);
+  segs.forEach(seg => wrapSegment(root, seg));
+}
+function wrapSegment(root, seg) {
+  const { index } = buildIndex(root);
+  index.forEach(entry => {
+    if (entry.end <= seg.s || entry.start >= seg.e) return;
+    let node = entry.node;
+    const ls = Math.max(0, seg.s - entry.start);
+    const le = Math.min(node.nodeValue.length, seg.e - entry.start);
+    if (le <= ls) return;
+    let target = ls > 0 ? node.splitText(ls) : node;
+    if (le - ls < target.nodeValue.length) target.splitText(le - ls);
+    const mark = document.createElement('mark');
+    mark.className = 'hl' + (seg.overlap ? ' overlap' : '');
+    mark.dataset.ids = seg.ids.join(' ');
+    if (seg.comment) mark.dataset.comment = '1';
+    target.replaceWith(mark); mark.appendChild(target);
+    mark.onclick = (e) => { e.stopPropagation(); onMarkClick(mark); };
+  });
+}
+
+function annoById(id) { return currentReader.annos.textAnnotations.find(a => a.id === id); }
+
+function onMarkClick(mark) {
+  const ids = mark.dataset.ids.split(' ');
+  focusAnno(ids[0]);
+  const a = annoById(ids[0]);
+  const rect = mark.getBoundingClientRect();
+  const html = `<div class="pbtns">
+      ${a.type === 'comment' ? '<button data-act="edit">Edit note</button>' : '<button data-act="comment">Add note</button>'}
+      <button data-act="quote">Save quote</button>
+      <button data-act="remove">Remove</button>
+    </div>`;
+  openPopover(rect, html, (act) => {
+    if (act === 'remove') removeAnno(ids[0]);
+    else if (act === 'quote') promoteToQuote(a);
+    else if (act === 'comment' || act === 'edit') editComment(a);
+  });
+}
+
+function focusAnno(id) {
+  document.querySelectorAll('mark.hl.focus').forEach(m => m.classList.remove('focus'));
+  document.querySelectorAll('.ccard.focus').forEach(c => c.classList.remove('focus'));
+  document.querySelectorAll(`mark.hl[data-ids~="${id}"]`).forEach(m => m.classList.add('focus'));
+  const card = document.querySelector(`.ccard[data-id="${id}"]`);
+  if (card) { card.classList.add('focus'); card.scrollIntoView({ block: 'nearest', behavior: 'smooth' }); }
+}
+
+// ---------- selection popover ----------
+let popoverCb = null;
+function openPopover(rect, html, cb) {
+  const pop = $('#popover');
+  pop.innerHTML = html;
+  pop.classList.add('show');
+  const pw = pop.offsetWidth, ph = pop.offsetHeight;
+  let left = rect.left + rect.width / 2 - pw / 2;
+  left = Math.max(10, Math.min(left, window.innerWidth - pw - 10));
+  let top = rect.top - ph - 8;
+  if (top < 10) top = rect.bottom + 8;
+  pop.style.left = left + 'px'; pop.style.top = top + 'px';
+  popoverCb = cb;
+  pop.querySelectorAll('[data-act]').forEach(b => b.onclick = (e) => { e.stopPropagation(); const act = b.dataset.act; if (popoverCb) popoverCb(act); });
+}
+function hidePopover() { const p = $('#popover'); p.classList.remove('show'); popoverCb = null; }
+document.addEventListener('mousedown', (e) => { const p = $('#popover'); if (p.classList.contains('show') && !p.contains(e.target) && e.target.tagName !== 'MARK') hidePopover(); });
+
+// selection -> highlight / comment
+$('#articleBody').addEventListener('mouseup', () => {
+  setTimeout(() => {
+    const sel = window.getSelection();
+    if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    const root = $('#articleBody');
+    if (!root.contains(range.commonAncestorContainer)) return;
+    if (!range.toString().trim()) return;
+    const rect = range.getBoundingClientRect();
+    const anchor = makeAnchor(root, range);
+    openPopover(rect, `<div class="pbtns">
+        <button data-act="hl">Highlight</button>
+        <button data-act="note">Comment</button>
+        <button data-act="quote">Save quote</button>
+      </div>`, (act) => {
+      if (act === 'hl') addAnno(anchor, 'highlight', null);
+      else if (act === 'note') startComment(rect, anchor);
+      else if (act === 'quote') { promoteToQuote({ anchor }); }
+      if (act !== 'note') { hidePopover(); window.getSelection().removeAllRanges(); }
+    });
+  }, 0);
+});
+
+function addAnno(anchor, type, comment) {
+  const now = new Date().toISOString();
+  const a = { id: uid('anno'), type, color: 'default', anchor, comment, createdAt: now, updatedAt: now, orphaned: false };
+  currentReader.annos.textAnnotations.push(a);
+  scheduleAnnoSave();
+  restoreHighlights(); renderRail();
+  return a;
+}
+function startComment(rect, anchor) {
+  openComposer(rect, '', (text) => {
+    if (text && text.trim()) addAnno(anchor, 'comment', text.trim());
+    hidePopover(); window.getSelection().removeAllRanges();
+  });
+}
+function editComment(a) {
+  const mark = document.querySelector(`mark.hl[data-ids~="${a.id}"]`);
+  const rect = mark ? mark.getBoundingClientRect() : { left: window.innerWidth / 2, right: window.innerWidth / 2, top: 120, bottom: 120, width: 0 };
+  openComposer(rect, a.comment || '', (text) => {
+    a.type = 'comment'; a.comment = (text || '').trim(); a.updatedAt = new Date().toISOString();
+    if (!a.comment) a.type = 'highlight';
+    scheduleAnnoSave(); restoreHighlights(); renderRail(); hidePopover();
+  });
+}
+function openComposer(rect, value, onSave) {
+  const html = `<div class="composer">
+      <textarea placeholder="Write a note…">${esc(value)}</textarea>
+      <div class="row"><button data-x="cancel">Cancel</button><button class="primary" data-x="save">Save</button></div>
+    </div>`;
+  openPopover(rect, html, () => {});
+  const pop = $('#popover');
+  const ta = pop.querySelector('textarea'); ta.focus(); ta.setSelectionRange(value.length, value.length);
+  pop.querySelector('[data-x="save"]').onclick = (e) => { e.stopPropagation(); onSave(ta.value); };
+  pop.querySelector('[data-x="cancel"]').onclick = (e) => { e.stopPropagation(); hidePopover(); };
+  ta.onkeydown = (e) => { if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); onSave(ta.value); } if (e.key === 'Escape') hidePopover(); };
+}
+
+function removeAnno(id) {
+  currentReader.annos.textAnnotations = currentReader.annos.textAnnotations.filter(a => a.id !== id);
+  scheduleAnnoSave(); restoreHighlights(); renderRail(); hidePopover();
+}
+
+// ---------- comment rail ----------
+function renderRail() {
+  const rail = $('#rail');
+  rail.innerHTML = '';
+  const comments = currentReader.annos.textAnnotations.filter(a => a.type === 'comment');
+  const orphans = currentReader.annos.textAnnotations.filter(a => a.orphaned);
+  if (!comments.length && !orphans.length) { rail.innerHTML = '<div class="rail-empty">Select text to highlight or comment. Click an image to annotate it.</div>'; return; }
+  const bodyTop = $('#articleBody').getBoundingClientRect().top;
+  comments.forEach(a => {
+    const card = document.createElement('div');
+    card.className = 'ccard' + (a.orphaned ? ' orphan' : '');
+    card.dataset.id = a.id;
+    card.innerHTML = `<div class="q">${esc((a.anchor.exact || '').slice(0, 120))}</div>
+      <div class="body">${esc(a.comment)}</div>
+      <div class="cmeta"><span>${a.orphaned ? 'Unplaced' : fmtDate(a.updatedAt)}</span><button data-del="${a.id}">Remove</button></div>`;
+    card.onclick = (e) => { if (e.target.dataset.del) { removeAnno(e.target.dataset.del); return; } focusAnno(a.id); };
+    rail.appendChild(card);
+    // vertical alignment to its mark
+    const mark = document.querySelector(`mark.hl[data-ids~="${a.id}"]`);
+    if (mark && !a.orphaned) {
+      const off = mark.getBoundingClientRect().top - bodyTop;
+      card.style.marginTop = card.previousElementSibling ? '12px' : Math.max(0, off) + 'px';
+    }
+  });
+}
+window.addEventListener('resize', () => { if (currentReader) { renderRail(); renderImagePins(); } });
+
+// ---------- image annotations ----------
+function prepareImages() {
+  $('#articleBody').querySelectorAll('figure img').forEach(img => {
+    if (img.parentElement.classList.contains('img-wrap')) return;
+    const wrap = document.createElement('span');
+    wrap.className = 'img-wrap';
+    img.replaceWith(wrap); wrap.appendChild(img);
+    img.addEventListener('click', (e) => {
+      e.preventDefault();
+      const rect = img.getBoundingClientRect();
+      const x = (e.clientX - rect.left) / rect.width;
+      const y = (e.clientY - rect.top) / rect.height;
+      const src = imgRel(img);
+      openComposer({ left: e.clientX, right: e.clientX, top: e.clientY, bottom: e.clientY, width: 0 }, '', (text) => {
+        if (text && text.trim()) {
+          const now = new Date().toISOString();
+          currentReader.annos.imageAnnotations.push({ id: uid('imgan'), image: src, pin: { x, y }, comment: text.trim(), createdAt: now, updatedAt: now });
+          scheduleAnnoSave(); renderImagePins();
+        }
+        hidePopover();
+      });
+    });
+  });
+}
+function imgRel(img) {
+  const src = img.getAttribute('src') || '';
+  const i = src.indexOf('images/');
+  return i >= 0 ? src.slice(i) : src;
+}
+function renderImagePins() {
+  if (!currentReader) return;
+  $('#articleBody').querySelectorAll('.pin').forEach(p => p.remove());
+  const byImg = {};
+  currentReader.annos.imageAnnotations.forEach(a => { (byImg[a.image] = byImg[a.image] || []).push(a); });
+  $('#articleBody').querySelectorAll('.img-wrap img').forEach(img => {
+    const rel = imgRel(img);
+    const list = byImg[rel]; if (!list) return;
+    const wrap = img.parentElement;
+    list.forEach((a, i) => {
+      const pin = document.createElement('span');
+      pin.className = 'pin' + (a.pin ? '' : ' badge');
+      pin.textContent = i + 1;
+      pin.title = a.comment;
+      if (a.pin) { pin.style.left = (a.pin.x * 100) + '%'; pin.style.top = (a.pin.y * 100) + '%'; }
+      pin.onclick = (e) => {
+        e.stopPropagation();
+        const rect = pin.getBoundingClientRect();
+        openPopover(rect, `<div class="composer"><div class="body" style="color:var(--on-ink);font-size:13px;margin-bottom:8px">${esc(a.comment)}</div><div class="row"><button data-x="del">Remove</button><button class="primary" data-x="edit">Edit</button></div></div>`, () => {});
+        const pop = $('#popover');
+        pop.querySelector('[data-x="del"]').onclick = (ev) => { ev.stopPropagation(); currentReader.annos.imageAnnotations = currentReader.annos.imageAnnotations.filter(x => x.id !== a.id); scheduleAnnoSave(); renderImagePins(); hidePopover(); };
+        pop.querySelector('[data-x="edit"]').onclick = (ev) => { ev.stopPropagation(); openComposer(rect, a.comment, (text) => { a.comment = (text || '').trim(); a.updatedAt = new Date().toISOString(); scheduleAnnoSave(); renderImagePins(); hidePopover(); }); };
+      };
+      wrap.appendChild(pin);
+    });
+  });
+}
+
+// ==================================================================
+// QUOTES
+// ==================================================================
+let quotes = { version: 1, quotes: [] };
+
+async function loadQuotes() { quotes = await api.readQuotes(); }
+function saveQuotes() { setSave('dirty'); api.writeQuotes(quotes).then(() => setSave('idle')).catch(() => setSave('error')); }
+
+async function promoteToQuote(a) {
+  const text = (a.anchor && a.anchor.exact) ? a.anchor.exact.trim() : '';
+  if (!text) return;
+  const src = currentReader ? titleWithoutTags(currentReader.meta.title) : '';
+  quotes.quotes.unshift({ id: uid('q'), text, source: src, author: '', articleId: currentReader ? currentReader.id : null, savedAt: new Date().toISOString() });
+  saveQuotes(); hidePopover();
+  toast('Saved to Quotes');
+}
+
+$('#qAdd').onclick = () => {
+  const text = $('#qText').value.trim();
+  if (!text) return;
+  quotes.quotes.unshift({ id: uid('q'), text, source: $('#qSource').value.trim(), author: $('#qAuthor').value.trim(), articleId: null, savedAt: new Date().toISOString() });
+  $('#qText').value = ''; $('#qSource').value = ''; $('#qAuthor').value = '';
+  saveQuotes(); renderQuotes(); toast('Quote saved');
+};
+$('#qSearch').addEventListener('input', renderQuotes);
+
+function renderQuotes() {
+  const q = $('#qSearch').value.trim().toLowerCase();
+  const list = quotes.quotes.filter(x => !q || (x.text + ' ' + x.source + ' ' + x.author).toLowerCase().includes(q));
+  $('#qSummary').textContent = `${quotes.quotes.length} ${quotes.quotes.length === 1 ? 'quote' : 'quotes'}`;
+  const ul = $('#qList'); ul.innerHTML = '';
+  if (!list.length) { ul.innerHTML = '<div class="empty"><p>No quotes yet. Save one above, or highlight a passage while reading.</p></div>'; return; }
+  list.forEach(x => {
+    const li = document.createElement('li');
+    li.className = 'q-item';
+    const attr = [];
+    if (x.author) attr.push(`<span class="author">${esc(x.author)}</span>`);
+    if (x.source) attr.push(`<span>${esc(x.source)}</span>`);
+    li.innerHTML = `<blockquote>${esc(x.text)}</blockquote>
+      <div class="attr">${attr.join('<span style="color:var(--ink-4)">·</span>') || '<span style="color:var(--ink-4)">Unattributed</span>'}
+        <button class="del" data-id="${x.id}">Remove</button></div>`;
+    li.querySelector('.del').onclick = () => { quotes.quotes = quotes.quotes.filter(y => y.id !== x.id); saveQuotes(); renderQuotes(); };
+    ul.appendChild(li);
+  });
+}
+
+// ==================================================================
+// SVG + menu + boot
+// ==================================================================
+const BOOK_SVG = `<svg class="mark" width="60" height="60" viewBox="0 0 60 60" fill="none" stroke="var(--ink-3)" stroke-width="1.6">
+  <path d="M30 16C24 11 16 11 11 13v33c5-2 13-2 19 3 6-5 14-5 19-3V13c-5-2-13-2-19 3z"/>
+  <path d="M30 16v33"/></svg>`;
+
+api.onMenu(action => { if (action === 'add') addDocuments(); else if (action === 'library') $('#libPill').click(); });
+
+(async function boot() {
+  await refreshLibPill();
+  await loadQuotes();
+  await loadLibrary();
+  setSave('idle');
+})();
+</script>
+</body>
+</html>
