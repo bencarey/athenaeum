@@ -117,6 +117,10 @@
   .reader-title:focus { color: var(--ink-max); }
   .reader-sub { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; font-size: 11px; color: var(--ink-4); letter-spacing: 0.04em; font-variant-numeric: tabular-nums; text-transform: uppercase; }
   .reader-actions { display: flex; gap: 14px; align-items: center; }
+  .reader-topbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .ptoggle { background: none; border: none; cursor: pointer; color: var(--ink-3); padding: 4px; display: inline-flex; border-radius: 7px; transition: color 100ms, background 100ms; }
+  .ptoggle:hover { color: var(--ink); background: var(--surface); }
+  .ptoggle.off { color: var(--ink-4); }
 
   /* rating */
   .rating-row { display: flex; align-items: center; gap: 14px; margin-top: 16px; }
@@ -165,11 +169,14 @@
   .toc { position: sticky; top: 16px; max-height: calc(100vh - 56px); overflow-y: auto; padding-right: 2px; }
   .toc-label { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-4); margin: 0 0 10px; }
   .toc-list { list-style: none; margin: 0 0 24px; }
-  .toc-item { display: block; font-size: 12.5px; line-height: 1.3; color: var(--ink-3); cursor: pointer; padding: 4px 8px; border-left: 2px solid transparent; transition: color 100ms, background 100ms; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .toc-sub { list-style: none; margin: 0; padding-left: 13px; }
+  .toc-item { display: flex; align-items: baseline; gap: 5px; font-size: 12.5px; line-height: 1.32; color: var(--ink-3); cursor: pointer; padding: 4px 6px; border-left: 2px solid transparent; transition: color 100ms, background 100ms; }
   .toc-item:hover { color: var(--ink); background: var(--surface); }
-  .toc-item.lvl2 { padding-left: 18px; }
-  .toc-item.lvl3 { padding-left: 28px; font-size: 11.5px; color: var(--ink-4); }
   .toc-item.active { color: var(--ink); border-left-color: var(--ink); font-weight: 600; }
+  .toc-caret { flex-shrink: 0; width: 11px; color: var(--ink-4); font-size: 9px; cursor: pointer; user-select: none; transition: transform 120ms; display: inline-block; text-align: center; }
+  .toc-caret.open { transform: rotate(90deg); }
+  .toc-caret.leaf { visibility: hidden; }
+  .toc-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .toc-bookmark { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #4a4220; background: var(--hl); border-radius: 7px; padding: 8px 10px; margin-bottom: 18px; cursor: pointer; }
   .toc-bookmark .bm-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .toc-bookmark .bm-x { margin-left: auto; color: #7a6f2a; cursor: pointer; font-size: 13px; flex-shrink: 0; }
@@ -185,7 +192,7 @@
   .prose h1 { font-size: 2.05em; font-weight: 700; letter-spacing: -0.024em; line-height: 1.12; margin: 1.7em 0 0.55em; }
   .prose h2 { font-size: 1.58em; font-weight: 700; letter-spacing: -0.018em; line-height: 1.18; margin: 1.6em 0 0.5em; }
   .prose h3 { font-size: 1.26em; font-weight: 700; letter-spacing: -0.01em; margin: 1.4em 0 0.4em; }
-  .prose h1, .prose h2, .prose h3 { background: var(--surface); border: 1px solid var(--line-faint); border-radius: 8px; padding: 0.36em 0.62em; scroll-margin-top: 18px; }
+  .prose h1, .prose h2, .prose h3 { background: var(--surface); border-bottom: 1.5px solid var(--line-strong); padding: 0.05em 0 0.22em; scroll-margin-top: 18px; }
   .prose h1:first-child, .prose h2:first-child, .prose h3:first-child { margin-top: 0; }
   .prose p { margin: 0 0 1.05em; }
   .prose ul, .prose ol { margin: 0 0 1.1em 1.3em; }
@@ -261,6 +268,16 @@
   .q-item .del { margin-left: auto; opacity: 0; background: none; border: none; color: var(--ink-4); cursor: pointer; font-size: 9px; letter-spacing: 0.1em; text-transform: uppercase; }
   .q-item .del:hover { color: var(--ink); }
 
+  /* keyboard shortcuts overlay */
+  .kbd-overlay { position: fixed; inset: 0; background: rgba(17,17,17,0.45); display: none; align-items: center; justify-content: center; z-index: 700; }
+  .kbd-overlay.show { display: flex; }
+  .kbd-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 26px 30px; width: 400px; max-width: 90vw; box-shadow: var(--shadow-2, 0 18px 50px rgba(0,0,0,0.25)); }
+  .kbd-card h3 { font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 16px; }
+  .kbd-row { display: flex; align-items: center; justify-content: space-between; padding: 9px 0; border-bottom: 1px solid var(--line-faint); font-size: 14px; color: var(--ink); }
+  .kbd-row:last-child { border-bottom: none; }
+  .kbd-row .keys { display: flex; gap: 5px; }
+  .kbd-row kbd { font-family: var(--mono); font-size: 11px; background: var(--surface-2); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 2px 7px; color: var(--ink-2); min-width: 14px; text-align: center; }
+
   .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(80px); background: var(--ink-max); color: var(--on-ink); padding: 9px 18px; border-radius: 999px; font-size: 11px; letter-spacing: 0.06em; transition: transform 200ms ease; z-index: 600; }
   .toast.show { transform: translateX(-50%) translateY(0); }
 
@@ -306,16 +323,17 @@
 
   <!-- READER -->
   <section class="view" id="view-reader">
-    <button class="btn--ghost" id="backBtn" style="margin-bottom:18px">← Library</button>
+    <div class="reader-topbar">
+      <button class="ptoggle" id="tocToggle" title="Toggle contents (left panel)"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4.5" width="14" height="11" rx="2.5"/><line x1="8" y1="4.5" x2="8" y2="15.5"/></svg></button>
+      <button class="btn--ghost" id="backBtn">← Library</button>
+      <button class="ptoggle" id="railToggle" title="Toggle notes (right panel)" style="margin-left:auto"><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="3" y="4.5" width="14" height="11" rx="2.5"/><line x1="12" y1="4.5" x2="12" y2="15.5"/></svg></button>
+    </div>
     <div class="reader-head">
       <div>
         <div class="reader-title" id="readerTitle" contenteditable="true" spellcheck="false"></div>
         <div class="reader-sub" id="readerSub"></div>
       </div>
       <div class="reader-actions">
-        <button class="btn--ghost" id="tocToggle" title="Show/hide contents">Contents</button>
-        <button class="btn--ghost" id="railToggle" title="Show/hide notes">Notes</button>
-        <button class="btn--ghost" id="bookmarkBtn" title="Bookmark this spot (B)">Bookmark</button>
         <button class="btn--ghost" id="wideBtn">Wide</button>
         <button class="btn--ghost" id="revealBtn">Original</button>
         <button class="btn--ghost" id="deleteBtn">Delete</button>
@@ -356,6 +374,16 @@
 
 <div class="popover" id="popover"></div>
 <div class="toast" id="toast"></div>
+<div class="kbd-overlay" id="kbdOverlay">
+  <div class="kbd-card">
+    <h3>Keyboard shortcuts</h3>
+    <div class="kbd-row"><span>Highlight selection</span><span class="keys"><kbd>H</kbd></span></div>
+    <div class="kbd-row"><span>Comment on selection</span><span class="keys"><kbd>C</kbd></span></div>
+    <div class="kbd-row"><span>Bookmark selection</span><span class="keys"><kbd>B</kbd></span></div>
+    <div class="kbd-row"><span>Back to library / close</span><span class="keys"><kbd>Esc</kbd></span></div>
+    <div class="kbd-row"><span>Show this help</span><span class="keys"><kbd>?</kbd></span></div>
+  </div>
+</div>
 
 <script>
 // `api` is injected as a global by preload.js (contextBridge). Use it directly.
@@ -878,10 +906,12 @@ $('#articleBody').addEventListener('mouseup', () => {
     openPopover(rect, `<div class="pbtns">
         <button data-act="hl">Highlight</button>
         <button data-act="note">Comment</button>
+        <button data-act="bm">Bookmark</button>
         <button data-act="quote">Save quote</button>
       </div>`, (act) => {
       if (act === 'hl') addAnno(anchor, 'highlight', null);
       else if (act === 'note') startComment(rect, anchor);
+      else if (act === 'bm') setBookmarkFromSelection(anchor);
       else if (act === 'quote') { promoteToQuote({ anchor }); }
       if (act !== 'note') { hidePopover(); window.getSelection().removeAllRanges(); }
     });
@@ -1020,6 +1050,29 @@ function assignHeadingIds() {
   $('#articleBody').querySelectorAll('h1,h2,h3').forEach((h, i) => { h.id = 'sec-' + i; });
 }
 
+function buildHeadingTree(heads) {
+  const root = { level: 0, children: [] };
+  const stack = [root];
+  heads.forEach(h => {
+    const node = { el: h, level: +h.tagName[1], text: h.textContent.trim(), children: [] };
+    while (stack.length > 1 && stack[stack.length - 1].level >= node.level) stack.pop();
+    stack[stack.length - 1].children.push(node);
+    stack.push(node);
+  });
+  return root.children;
+}
+function renderTocNodes(nodes, top) {
+  // top level shown by default; nested levels collapsed until expanded
+  return `<ul class="${top ? 'toc-list' : 'toc-sub'}"${top ? '' : ' style="display:none"'}>` +
+    nodes.map(n => {
+      const kids = n.children.length;
+      return `<li class="toc-node"><div class="toc-item" data-sec="${n.el.id}" title="${esc(n.text)}">` +
+        `<span class="toc-caret${kids ? '' : ' leaf'}"${kids ? ' data-caret="1"' : ''}>&#9656;</span>` +
+        `<span class="toc-text">${esc(n.text.slice(0, 90))}</span></div>` +
+        (kids ? renderTocNodes(n.children, false) : '') + `</li>`;
+    }).join('') + `</ul>`;
+}
+
 function renderTOC() {
   const toc = $('#toc');
   if (!currentReader) { toc.innerHTML = ''; return; }
@@ -1035,11 +1088,7 @@ function renderTOC() {
       <span class="bm-x" data-bm-remove="1" title="Remove bookmark">&times;</span></div>`;
   }
   if (heads.length) {
-    html += `<div class="toc-label">Contents</div><ul class="toc-list">`;
-    heads.forEach(h => {
-      html += `<li class="toc-item lvl${h.tagName[1]}" data-sec="${h.id}" title="${esc(h.textContent.trim())}">${esc(h.textContent.trim().slice(0, 80))}</li>`;
-    });
-    html += `</ul>`;
+    html += `<div class="toc-label">Contents</div>` + renderTocNodes(buildHeadingTree(heads), true);
   }
   if (figs.length) {
     html += `<div class="toc-label">Figures (${figs.length})</div><div class="toc-thumbs">`;
@@ -1050,7 +1099,16 @@ function renderTOC() {
   }
   toc.innerHTML = html || '<div class="toc-label">No sections</div>';
 
-  toc.querySelectorAll('.toc-item').forEach(it => it.onclick = () => {
+  toc.querySelectorAll('.toc-caret[data-caret]').forEach(c => c.onclick = (e) => {
+    e.stopPropagation();
+    const sub = c.closest('.toc-node').querySelector(':scope > .toc-sub');
+    if (!sub) return;
+    const open = sub.style.display !== 'none';
+    sub.style.display = open ? 'none' : 'block';
+    c.classList.toggle('open', !open);
+  });
+  toc.querySelectorAll('.toc-item').forEach(it => it.onclick = (e) => {
+    if (e.target.dataset.caret) return;
     const el = document.getElementById(it.dataset.sec);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
   });
@@ -1087,28 +1145,13 @@ window.addEventListener('scroll', () => {
   });
 }, { passive: true });
 
-// ---- bookmark ----
-function captureBookmark() {
-  const body = $('#articleBody');
-  const blocks = [...body.querySelectorAll('p,h1,h2,h3,li,blockquote,figure,table')];
-  let target = null;
-  for (const el of blocks) { if (el.getBoundingClientRect().bottom > 60) { target = el; break; } }
-  target = target || blocks[0];
-  if (!target) return null;
-  const { T } = buildIndex(body);
-  const start = globalOffset(body, target, 0);
-  return {
-    exact: T.slice(start, start + 48),
-    prefix: T.slice(Math.max(0, start - 32), start),
-    suffix: T.slice(start + 48, start + 80),
-    start,
-    label: (target.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 46)
+// ---- bookmark (set from a text selection, like highlight/comment) ----
+async function setBookmarkFromSelection(anchor) {
+  if (!currentReader || !anchor || !anchor.exact) return;
+  const bm = {
+    exact: anchor.exact, prefix: anchor.prefix, suffix: anchor.suffix, start: anchor.start,
+    label: anchor.exact.replace(/\s+/g, ' ').trim().slice(0, 46)
   };
-}
-async function toggleBookmark() {
-  if (!currentReader) return;
-  const bm = captureBookmark();
-  if (!bm) return;
   currentReader.meta = await api.updateMeta(currentReader.id, { bookmark: bm });
   renderTOC(); toast('Bookmarked');
 }
@@ -1143,11 +1186,14 @@ function restoreBookmark() {
     else im.addEventListener('load', () => { if (--pending <= 0) setTimeout(go, 40); }, { once: true });
   });
 }
-$('#bookmarkBtn').onclick = toggleBookmark;
-
 // ==================================================================
 // HOTKEYS
 // ==================================================================
+function toggleKbd(force) {
+  const o = $('#kbdOverlay');
+  o.classList.toggle('show', force === undefined ? !o.classList.contains('show') : force);
+}
+$('#kbdOverlay').onclick = (e) => { if (e.target.id === 'kbdOverlay') toggleKbd(false); };
 function currentSelection() {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
@@ -1161,22 +1207,23 @@ document.addEventListener('keydown', (e) => {
   const typing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
 
   if (e.key === 'Escape') {
+    if ($('#kbdOverlay').classList.contains('show')) { toggleKbd(false); e.preventDefault(); return; }
     if ($('#popover').classList.contains('show')) { hidePopover(); window.getSelection().removeAllRanges(); e.preventDefault(); return; }
     if (typing) { ae.blur(); return; }
     if (currentReader) { leaveReader(); showView('library'); e.preventDefault(); }
     return;
   }
+  if (e.key === '?' && !typing && !e.metaKey && !e.ctrlKey) { e.preventDefault(); toggleKbd(); return; }
   if (typing || e.metaKey || e.ctrlKey || e.altKey || !currentReader) return;
 
   const k = e.key.toLowerCase();
-  if (k === 'h' || k === 'c') {
+  if (k === 'h' || k === 'c' || k === 'b') {
     const info = currentSelection();
     if (!info) return;
     e.preventDefault();
     if (k === 'h') { addAnno(info.anchor, 'highlight', null); hidePopover(); window.getSelection().removeAllRanges(); }
-    else startComment(info.rect, info.anchor);
-  } else if (k === 'b') {
-    e.preventDefault(); toggleBookmark();
+    else if (k === 'c') startComment(info.rect, info.anchor);
+    else setBookmarkFromSelection(info.anchor);
   }
 });
 

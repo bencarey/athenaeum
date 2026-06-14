@@ -98,6 +98,83 @@ def expand_with_labels(page, rc):
     return out & page.rect
 
 
+def clean_running_artifacts(md):
+    """Drop standalone page numbers and repeated running headers/footers (e.g. a
+    document title printed at the foot of every page)."""
+    from collections import Counter
+    norm = lambda s: re.sub(r"\s+", " ", s.strip())
+    base = lambda s: re.sub(r"^\d{1,4}\s+|\s+\d{1,4}$", "", norm(s)).strip()
+    lines = md.split("\n")
+    cnt = Counter()
+    for l in lines:
+        s = norm(l)
+        if s and not s.startswith("#") and not s.startswith("!["):
+            b = base(s)
+            if b and len(b) < 70:
+                cnt[b] += 1
+    repeated = {b for b, c in cnt.items() if c >= 4}
+    out = []
+    for l in lines:
+        if not l.strip():
+            out.append(l); continue
+        s = norm(l)
+        if not s.startswith("#") and not s.startswith("!["):
+            if re.fullmatch(r"\d{1,3}", s):          # bare page number
+                continue
+            if base(s) in repeated:                  # running header/footer
+                continue
+        out.append(l)
+    return "\n".join(out)
+
+
+def relevel_headings(md, doc, fitz):
+    """Re-assign markdown heading levels (#, ##, ###) by relative font size, so the
+    table of contents has a usable hierarchy. pymupdf4llm tends to flatten every
+    heading to one level; ranking by font size restores depth for most documents."""
+    size_map = {}
+    for pno in range(doc.page_count):
+        try:
+            blocks = doc[pno].get_text("dict").get("blocks", [])
+        except Exception:
+            continue
+        for b in blocks:
+            if b.get("type") != 0:
+                continue
+            for ln in b.get("lines", []):
+                spans = ln.get("spans", [])
+                txt = "".join(s["text"] for s in spans).strip()
+                if not txt:
+                    continue
+                sz = max((s["size"] for s in spans), default=0)
+                key = re.sub(r"\s+", " ", txt)[:60]
+                if sz > size_map.get(key, 0):
+                    size_map[key] = sz
+
+    def size_of(text):
+        return size_map.get(re.sub(r"\s+", " ", re.sub(r"[*`#]", "", text).strip())[:60], 0)
+
+    lines = md.split("\n")
+    sizes = [round(size_of(m.group(1))) for m in (re.match(r"^#{1,6}\s+(.*)$", l) for l in lines)
+             if m and size_of(m.group(1))]
+    uniq = sorted(set(s for s in sizes if s), reverse=True)
+    if len(uniq) < 2:
+        return md  # nothing to differentiate
+
+    def level_of(text):
+        s = round(size_of(text))
+        if not s:
+            return 2
+        if s in uniq:
+            return min(uniq.index(s), 2) + 1
+        return min(range(len(uniq)), key=lambda i: abs(uniq[i] - s)) + 1
+
+    out = []
+    for l in lines:
+        m = re.match(r"^#{1,6}\s+(.*)$", l)
+        out.append(("#" * level_of(m.group(1)) + " " + m.group(1)) if m else l)
+    return "\n".join(out)
+
+
 def main():
     if len(sys.argv) < 3:
         print(json.dumps({"error": "usage: pdf_to_html.py <src> <outDir>"})); sys.exit(1)
@@ -193,6 +270,10 @@ def main():
     # strip pymupdf4llm's in-image OCR scaffolding markers for a clean reading view
     md = re.sub(r"\*\*-+ (?:Start|End) of picture text -+\*\*(?:<br>)?", "", md)
     md = re.sub(r"\n{3,}", "\n\n", md).strip()
+    md = clean_running_artifacts(md)
+    # normalize literal bullet glyphs into real markdown list items
+    md = re.sub(r"(?m)^\s*[•·‣◦▪●○∙]\s+", "- ", md)
+    md = relevel_headings(md, doc, fitz)
     if not title:
         m = re.search(r"^#+\s+(.+)$", md, re.M)
         if m:
