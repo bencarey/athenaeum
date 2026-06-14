@@ -175,6 +175,55 @@ def relevel_headings(md, doc, fitz):
     return "\n".join(out)
 
 
+def clean_raster_labels(page, fitz):
+    """Remove small axis/legend text overlapping extracted raster images (the
+    image is kept; only the leaked label text is redacted)."""
+    try:
+        img_rects = [fitz.Rect(i["bbox"]) for i in page.get_image_info()]
+    except Exception:
+        return
+    if not img_rects:
+        return
+    pw, ph = page.rect.width, page.rect.height
+    parea = (pw * ph) or 1
+    blocks = page.get_text("dict").get("blocks", [])
+    annots = []
+    for ir in img_rects:
+        a = abs(ir.width * ir.height)
+        # only chart-sized images: skip thumbnails, and skip large/full-bleed
+        # background images and banners (their overlapping text IS body text)
+        if a < 0.03 * parea or ir.width < 80 or ir.height < 80:
+            continue
+        if a > 0.45 * parea or ir.width > 0.9 * pw or ir.height > 0.85 * ph:
+            continue
+        grown = (ir + (-18, -18, 18, 18)) & page.rect
+        for b in blocks:
+            if b.get("type") != 0:
+                continue
+            bb = fitz.Rect(b["bbox"])
+            if bb.height > 26:
+                continue
+            txt = "".join(s["text"] for ln in b.get("lines", []) for s in ln.get("spans", [])).strip()
+            if len(txt) > 36:  # labels are short; longer means body text
+                continue
+            sizes = [s["size"] for ln in b.get("lines", []) for s in ln.get("spans", [])]
+            if not sizes or sum(sizes) / len(sizes) > 12:
+                continue
+            if not grown.intersects(bb):
+                continue
+            inter = bb & grown
+            if abs(inter.width * inter.height) < 0.5 * (abs(bb.width * bb.height) or 1):
+                continue
+            annots.append(bb)
+    for a in annots:
+        page.add_redact_annot(a, fill=(1, 1, 1))
+    if annots:
+        try:
+            page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
+        except Exception:
+            pass
+
+
 def main():
     if len(sys.argv) < 3:
         print(json.dumps({"error": "usage: pdf_to_html.py <src> <outDir>"})); sys.exit(1)
@@ -190,7 +239,16 @@ def main():
     doc = fitz.open(src)
     page_count = doc.page_count
     title = (doc.metadata or {}).get("title") or ""
+    pdf_author = (doc.metadata or {}).get("author") or ""
     warnings = []
+
+    # cover screenshot of the first page, for the document opener
+    cover = None
+    try:
+        doc[0].get_pixmap(dpi=140).save(os.path.join(out_dir, "cover.png"))
+        cover = "cover.png"
+    except Exception:
+        pass
 
     # Is there a real text layer?
     text_len = sum(len(doc[i].get_text("text")) for i in range(page_count))
@@ -201,38 +259,36 @@ def main():
             name = f"page-{i+1:03d}.png"
             pix.save(os.path.join(images_dir, name))
             refs.append(f"images/{name}")
-        return {"mode": "pages", "images": refs, "title": title, "pageCount": page_count}
+        return {"mode": "pages", "images": refs, "title": title, "pageCount": page_count,
+                "cover": cover, "author": pdf_author}
 
-    # ---- chart pass: rasterize dense vector clusters, then redact them ----
+    # ---- chart/exhibit pass: rasterize dense vector clusters and complex graphic
+    #      tables, redact them, then strip labels leaking around raster images ----
     page_charts = {}  # page index -> [relative image paths]
     for pno in range(page_count):
         page = doc[pno]
         try:
-            tbls = page.find_tables()
-            table_rects = [fitz.Rect(t.bbox) for t in tbls.tables]
+            table_rects = [fitz.Rect(t.bbox) for t in page.find_tables().tables]
         except Exception:
             table_rects = []
-        rects = find_chart_rects(page, table_rects)
-        if not rects:
-            continue
+        charts = find_chart_rects(page, table_rects)
+        targets = [expand_with_labels(page, rc) for rc in charts]
         names = []
-        for i, rc in enumerate(rects):
-            rc = expand_with_labels(page, rc)
+        for i, rc in enumerate(targets):
             clip = (rc + (-4, -4, 4, 4)) & page.rect
             try:
-                pix = page.get_pixmap(clip=clip, dpi=150)
-                name = f"chart-{pno+1:03d}-{i+1}.png"
-                pix.save(os.path.join(images_dir, name))
-                names.append(f"images/{name}")
+                page.get_pixmap(clip=clip, dpi=150).save(os.path.join(images_dir, f"chart-{pno+1:03d}-{i+1}.png"))
+                names.append(f"images/chart-{pno+1:03d}-{i+1}.png")
                 page.add_redact_annot(clip, fill=(1, 1, 1))
             except Exception as e:
-                warnings.append(f"page {pno+1}: chart raster failed ({str(e)[:60]})")
+                warnings.append(f"page {pno+1}: raster failed ({str(e)[:50]})")
         if names:
             try:
                 page.apply_redactions()
             except Exception:
                 pass
             page_charts[pno] = names
+        clean_raster_labels(page, fitz)
 
     # ---- text extraction on the (chart-redacted) document ----
     md = None
@@ -281,7 +337,7 @@ def main():
 
     return {
         "mode": "text", "markdown": md, "images": [], "title": title,
-        "pageCount": page_count, "warnings": warnings
+        "pageCount": page_count, "warnings": warnings, "cover": cover, "author": pdf_author
     }
 
 

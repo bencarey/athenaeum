@@ -17,8 +17,11 @@ contextBridge.exposeInMainWorld('api', {
   getAnnotationsMtime:(id)          => ipcRenderer.invoke('get-annotations-mtime', id),
   readQuotes:         ()            => ipcRenderer.invoke('read-quotes'),
   writeQuotes:        (data)        => ipcRenderer.invoke('write-quotes', data),
-  revealOriginal:     (id)          => ipcRenderer.invoke('reveal-original', id),
+  openOriginal:       (id)          => ipcRenderer.invoke('open-original', id),
   openExternal:       (url)         => ipcRenderer.invoke('open-external', url),
   copyImage:          (path)        => ipcRenderer.invoke('copy-image', path),
+  hasApiKey:          ()            => ipcRenderer.invoke('has-api-key'),
+  setApiKey:          (key)         => ipcRenderer.invoke('set-api-key', key),
+  regenerateSummary:  (id)          => ipcRenderer.invoke('regenerate-summary', id),
   onMenu:             (cb)          => ipcRenderer.on('menu', (_, action) => cb(action))
 });

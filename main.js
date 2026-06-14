@@ -126,6 +126,15 @@ function normalizeFragment(rawHtml) {
     if (!p.textContent.trim() && !p.querySelector('img')) p.remove();
   });
 
+  // tag footnotes / citations (a small number then a quote or capital) so they
+  // render smaller and lighter, distinct from body text
+  doc.querySelectorAll('blockquote, p').forEach((el) => {
+    const t = el.textContent.trim();
+    if (/^\d{1,2}(["“'']|[A-Z])/.test(t) && (el.tagName === 'BLOCKQUOTE' || t.length < 260)) {
+      el.classList.add('cite');
+    }
+  });
+
   return doc.body.innerHTML.trim();
 }
 
@@ -275,12 +284,44 @@ async function convertPdf(srcPath, imagesDir) {
   if (result.mode === 'pages') {
     // scanned / text-empty PDF: page images already written to images/
     const figs = result.images.map((src) => `<figure><img src="${src}" alt=""></figure>`).join('\n');
-    return { html: figs, title: result.title || '', warnings: ['Image-only PDF: text was not extracted.'], pages: result.pageCount };
+    return { html: figs, title: result.title || '', warnings: ['Image-only PDF: text was not extracted.'], pages: result.pageCount, cover: result.cover || null, author: result.author || '' };
   }
 
   const { marked } = await import('marked');
   const html = marked.parse(result.markdown || '', { mangle: false, headerIds: false });
-  return { html, title: result.title || '', warnings: result.warnings || [], pages: result.pageCount };
+  return { html, title: result.title || '', warnings: result.warnings || [], pages: result.pageCount, cover: result.cover || null, author: result.author || '' };
+}
+
+// ----- AI summary (Anthropic API, user-provided key) ------------------------
+
+function apiKey() {
+  return process.env.ANTHROPIC_API_KEY || loadConfig().anthropicApiKey || '';
+}
+
+async function generateSummary(text) {
+  const key = apiKey();
+  if (!key || !text || text.length < 200) return null;
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 400,
+        messages: [{
+          role: 'user',
+          content: 'Summarize this document in 2 to 3 sentences for a reading-app cover card, and identify the author or publishing source. ' +
+            'Respond with ONLY a JSON object: {"summary": "...", "author": "..."}. No preamble.\n\nDOCUMENT:\n' + text.slice(0, 12000)
+        }]
+      })
+    });
+    if (!res.ok) return null;
+    const data = await res.json();
+    const txt = (data.content && data.content[0] && data.content[0].text) || '';
+    const m = txt.match(/\{[\s\S]*\}/);
+    if (m) { try { return JSON.parse(m[0]); } catch {} }
+    return { summary: txt.trim().slice(0, 600), author: '' };
+  } catch { return null; }
 }
 
 // ----- ingest orchestration -------------------------------------------------
@@ -319,6 +360,11 @@ async function ingestFile(srcPath) {
   const title = (conv.title || firstHeading(fragment) || fallbackTitle).trim();
   const words = countWords(fragment);
   const imageCount = (fragment.match(/<img/gi) || []).length;
+
+  // cover (already written into the folder by the converter) + AI summary
+  const plain = fragment.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const ai = await generateSummary(plain);
+
   const meta = {
     version: 1,
     id,
@@ -326,6 +372,9 @@ async function ingestFile(srcPath) {
     tags: parseTags(title),
     sourceType,
     originalFile: 'original' + ext,
+    cover: conv.cover || null,
+    author: (ai && ai.author) || conv.author || '',
+    summary: (ai && ai.summary) || null,
     wordCount: words,
     readMinutes: Math.max(1, Math.ceil(words / 225)),
     imageCount,
@@ -475,14 +524,40 @@ ipcMain.handle('write-quotes', (_, data) => {
   return true;
 });
 
-ipcMain.handle('reveal-original', (_, id) => {
+ipcMain.handle('open-original', (_, id) => {
   try {
     const meta = JSON.parse(fs.readFileSync(path.join(articlesDir(), id, 'meta.json'), 'utf-8'));
-    shell.showItemInFolder(path.join(articlesDir(), id, meta.originalFile));
+    shell.openPath(path.join(articlesDir(), id, meta.originalFile));
   } catch {}
 });
 
 ipcMain.handle('open-external', (_, url) => shell.openExternal(url));
+
+ipcMain.handle('has-api-key', () => !!apiKey());
+
+ipcMain.handle('set-api-key', (_, key) => {
+  const cfg = loadConfig();
+  cfg.anthropicApiKey = (key || '').trim();
+  saveConfig(cfg);
+  return !!cfg.anthropicApiKey;
+});
+
+ipcMain.handle('regenerate-summary', async (_, id) => {
+  const folder = path.join(articlesDir(), id);
+  const metaPath = path.join(folder, 'meta.json');
+  try {
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    const fragment = fs.readFileSync(path.join(folder, 'article.html'), 'utf-8');
+    const plain = fragment.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const ai = await generateSummary(plain);
+    if (ai) {
+      if (ai.summary) meta.summary = ai.summary;
+      if (ai.author) meta.author = ai.author;
+      fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+    }
+    return meta;
+  } catch { return null; }
+});
 
 ipcMain.handle('copy-image', (_, absPath) => {
   try {

@@ -144,26 +144,41 @@
   .rate-ticks i.on { background: var(--ink); }
   .rate-line b { font-weight: 600; color: var(--ink); }
 
-  /* 1/4 · 1/2 · 1/4 proportional columns; either side panel can collapse */
-  .reader-grid { display: grid; grid-template-columns: minmax(190px,1fr) minmax(0,2fr) minmax(190px,1fr); gap: 36px; margin-top: 30px; align-items: start; }
-  #view-reader.no-toc .reader-grid { grid-template-columns: minmax(0,3fr) minmax(200px,1fr); }
-  #view-reader.no-rail .reader-grid { grid-template-columns: minmax(200px,1fr) minmax(0,3fr); }
-  #view-reader.no-toc.no-rail .reader-grid { grid-template-columns: minmax(0,1fr); }
+  /* document opener: cover screenshot + author/date/AI summary */
+  .opener { display: grid; grid-template-columns: 188px 1fr; gap: 26px; align-items: start; margin: 22px 0 6px; padding: 20px 22px; background: var(--surface); border: 1px solid var(--line-faint); border-radius: 14px; }
+  .opener.no-cover { grid-template-columns: 1fr; }
+  .opener.hidden { display: none; }
+  .opener-cover { cursor: pointer; }
+  .opener-cover img { width: 100%; border: 1px solid var(--line); border-radius: 6px; display: block; box-shadow: 0 3px 14px rgba(0,0,0,0.10); transition: box-shadow 140ms, transform 140ms; }
+  .opener-cover:hover img { box-shadow: 0 6px 22px rgba(0,0,0,0.18); transform: translateY(-1px); }
+  .opener-author { font-size: 17px; font-weight: 700; letter-spacing: -0.015em; color: var(--ink); line-height: 1.25; }
+  .opener-date { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-4); margin-top: 6px; font-variant-numeric: tabular-nums; }
+  .opener-summary { margin-top: 15px; font-size: 14.5px; line-height: 1.58; color: var(--ink-2); }
+  .opener-summary.muted { color: var(--ink-4); }
+  .opener-summary .btn--ghost { font-size: 11px; }
+  .opener-summary .loading { font-style: italic; }
+
+  /* a centered reading group: contents | comfortable measure | notes.
+     The reading column stays a readable width; extra space becomes margins. */
+  .reader-grid { display: grid; grid-template-columns: 236px minmax(0,720px) 268px; gap: 44px; margin-top: 30px; align-items: start; justify-content: center; }
+  #view-reader.no-toc .reader-grid { grid-template-columns: minmax(0,720px) 268px; }
+  #view-reader.no-rail .reader-grid { grid-template-columns: 236px minmax(0,760px); }
+  #view-reader.no-toc.no-rail .reader-grid { grid-template-columns: minmax(0,760px); }
   #view-reader.no-toc .toc { display: none; }
   #view-reader.no-rail .rail { display: none; }
   @media (max-width: 1180px) {
     .toc { display: none !important; }
-    .reader-grid { grid-template-columns: minmax(0,1fr) minmax(190px,270px) !important; }
-    #view-reader.no-rail .reader-grid { grid-template-columns: minmax(0,1fr) !important; }
+    .reader-grid { grid-template-columns: minmax(0,720px) 250px !important; }
+    #view-reader.no-rail .reader-grid { grid-template-columns: minmax(0,760px) !important; }
   }
   @media (max-width: 900px) {
     .toc, .rail { display: none !important; }
-    .reader-grid { grid-template-columns: 1fr !important; }
+    .reader-grid { grid-template-columns: minmax(0,760px) !important; }
   }
 
-  /* wide mode: break the reader out of the centered frame to ~90% of the window */
-  #view-reader.wide { width: 90vw; margin-left: 50%; transform: translateX(-50%); }
-  #view-reader.wide .prose { max-width: 1180px; }
+  /* wide mode: widen the whole page (top bar + nav + reader) to ~94% of the window */
+  body.wide-page .frame { max-width: 94vw; }
+  body.wide-page .frame { transition: max-width 160ms ease; }
 
   /* table of contents sidebar */
   .toc { position: sticky; top: 16px; max-height: calc(100vh - 56px); overflow-y: auto; padding-right: 2px; }
@@ -188,15 +203,18 @@
   .thumb:hover .copy { opacity: 1; }
 
   /* article prose */
-  .prose { max-width: 820px; font-size: 17px; line-height: 1.65; color: var(--ink); }
+  .prose { max-width: 720px; font-size: 18px; line-height: 1.72; color: var(--ink); letter-spacing: -0.003em; -webkit-font-smoothing: antialiased; text-rendering: optimizeLegibility; }
+  .prose .cite { display: block; font-size: 0.78em; line-height: 1.5; color: var(--ink-4); margin: 0.4em 0; font-style: normal; }
+  .prose blockquote.cite { border-left: 2px solid var(--line); padding-left: 12px; }
   .prose h1 { font-size: 2.05em; font-weight: 700; letter-spacing: -0.024em; line-height: 1.12; margin: 1.7em 0 0.55em; }
   .prose h2 { font-size: 1.58em; font-weight: 700; letter-spacing: -0.018em; line-height: 1.18; margin: 1.6em 0 0.5em; }
   .prose h3 { font-size: 1.26em; font-weight: 700; letter-spacing: -0.01em; margin: 1.4em 0 0.4em; }
   .prose h1, .prose h2, .prose h3 { background: var(--surface); border-bottom: 1.5px solid var(--line-strong); padding: 0.05em 0 0.22em; scroll-margin-top: 18px; }
   .prose h1:first-child, .prose h2:first-child, .prose h3:first-child { margin-top: 0; }
-  .prose p { margin: 0 0 1.05em; }
-  .prose ul, .prose ol { margin: 0 0 1.1em 1.3em; }
-  .prose li { margin: 0.3em 0; }
+  .prose p { margin: 0 0 1.2em; }
+  .prose ul, .prose ol { margin: 0 0 1.2em 1.2em; }
+  .prose li { margin: 0.4em 0; line-height: 1.62; padding-left: 0.15em; }
+  .prose li::marker { color: var(--ink-4); }
   .prose blockquote { margin: 1.3em 0; padding-left: 18px; border-left: 2px solid var(--line-strong); color: var(--ink-2); font-style: italic; }
   .prose a { color: var(--ink); text-decoration: underline; text-decoration-color: var(--ink-4); text-underline-offset: 2px; }
   .prose code { font-family: var(--mono); font-size: 0.86em; background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
@@ -335,13 +353,20 @@
       </div>
       <div class="reader-actions">
         <button class="btn--ghost" id="wideBtn">Wide</button>
-        <button class="btn--ghost" id="revealBtn">Original</button>
         <button class="btn--ghost" id="deleteBtn">Delete</button>
       </div>
     </div>
     <div class="rating-row">
       <span class="rating-label">Rating</span>
       <div class="rating" id="readerRating"></div>
+    </div>
+    <div class="opener hidden" id="opener">
+      <div class="opener-cover" id="openerCover"><img alt="Cover"></div>
+      <div class="opener-meta">
+        <div class="opener-author" id="openerAuthor"></div>
+        <div class="opener-date" id="openerDate"></div>
+        <div class="opener-summary" id="openerSummary"></div>
+      </div>
     </div>
     <div class="reader-grid">
       <aside class="toc" id="toc"></aside>
@@ -382,6 +407,17 @@
     <div class="kbd-row"><span>Bookmark selection</span><span class="keys"><kbd>B</kbd></span></div>
     <div class="kbd-row"><span>Back to library / close</span><span class="keys"><kbd>Esc</kbd></span></div>
     <div class="kbd-row"><span>Show this help</span><span class="keys"><kbd>?</kbd></span></div>
+  </div>
+</div>
+<div class="kbd-overlay" id="keyOverlay">
+  <div class="kbd-card" style="width:440px">
+    <h3>Anthropic API key</h3>
+    <p style="font-size:13px;color:var(--ink-3);margin-bottom:14px;line-height:1.5">Used to generate document summaries. Stored locally on this Mac, never synced or shared.</p>
+    <input id="keyInput" type="password" placeholder="sk-ant-..." autocomplete="off" spellcheck="false" style="width:100%;height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit;font-size:13px;background:var(--surface-2);color:var(--ink);outline:none">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn--outline" id="keyCancel">Cancel</button>
+      <button class="btn" id="keySave">Save</button>
+    </div>
   </div>
 </div>
 
@@ -433,6 +469,7 @@ function showView(name) {
   $('#view-' + name).classList.add('active');
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === name));
   document.body.classList.toggle('reading', name === 'reader');
+  document.body.classList.toggle('wide-page', name === 'reader' && !!loadPrefs().wide);
 }
 document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => {
   if (currentReader) leaveReader();
@@ -575,6 +612,8 @@ async function openReader(id) {
   const baseUrl = 'file://' + encodeURI(base.replace(/\\/g, '/'));
   $('#articleBody').innerHTML = html.replace(/(src|href)="(?!https?:|file:|mailto:|#)([^"]+)"/g,
     (_, attr, url) => `${attr}="${baseUrl}${url.replace(/^\.?\//, '')}"`);
+  currentReader.baseUrl = baseUrl;
+  renderOpener();
 
   assignHeadingIds();
   prepareImages();
@@ -592,6 +631,7 @@ async function openReader(id) {
 
 function setWide(wide, rerender) {
   $('#view-reader').classList.toggle('wide', wide);
+  document.body.classList.toggle('wide-page', wide && !!currentReader);
   $('#wideBtn').textContent = wide ? 'Narrow' : 'Wide';
   if (rerender && currentReader) { renderRail(); renderImagePins(); }
 }
@@ -669,8 +709,61 @@ async function setRating(v) {
   renderRating();
 }
 
+// ---- document opener (cover + author + date + AI summary) ----
+function renderOpener() {
+  const op = $('#opener');
+  if (!currentReader) { op.classList.add('hidden'); return; }
+  const m = currentReader.meta;
+  op.classList.remove('hidden');
+  const hasCover = !!m.cover;
+  op.classList.toggle('no-cover', !hasCover);
+  const wrap = $('#openerCover');
+  if (hasCover) {
+    wrap.style.display = '';
+    wrap.querySelector('img').src = (currentReader.baseUrl || '') + m.cover;
+    wrap.title = 'Open the original document';
+    wrap.onclick = () => api.openOriginal(currentReader.id);
+  } else { wrap.style.display = 'none'; }
+  $('#openerAuthor').textContent = m.author || titleWithoutTags(m.title) || 'Document';
+  $('#openerDate').textContent = 'Added ' + fmtDate(m.ingestedAt) + ' · ' + (SRC_GLYPH[m.sourceType] || 'DOC') +
+    (m.pageCount ? ' · ' + m.pageCount + ' pages' : '');
+  const sumEl = $('#openerSummary');
+  if (m.summary) { sumEl.classList.remove('muted'); sumEl.textContent = m.summary; }
+  else renderSummaryPlaceholder(sumEl);
+}
+async function renderSummaryPlaceholder(el) {
+  el.classList.add('muted');
+  const has = await api.hasApiKey();
+  el.textContent = has ? 'No summary yet. ' : 'AI summaries are off. ';
+  const b = document.createElement('button');
+  b.className = 'btn--ghost';
+  b.textContent = has ? 'Generate summary' : 'Add Anthropic API key';
+  b.onclick = has ? generateSummaryNow : promptApiKey;
+  el.appendChild(b);
+}
+async function generateSummaryNow() {
+  if (!currentReader) return;
+  const el = $('#openerSummary'); el.classList.add('muted');
+  el.innerHTML = '<span class="loading">Generating summary…</span>';
+  const meta = await api.regenerateSummary(currentReader.id);
+  if (meta && meta.summary) { currentReader.meta = meta; renderOpener(); }
+  else { el.classList.add('muted'); el.textContent = 'Could not generate a summary (check your API key).'; }
+}
+function promptApiKey() {
+  $('#keyOverlay').classList.add('show');
+  const inp = $('#keyInput'); inp.value = ''; setTimeout(() => inp.focus(), 30);
+}
+$('#keyCancel').onclick = () => $('#keyOverlay').classList.remove('show');
+$('#keySave').onclick = async () => {
+  await api.setApiKey($('#keyInput').value);
+  $('#keyInput').value = '';
+  $('#keyOverlay').classList.remove('show');
+  if (currentReader) renderOpener();
+};
+$('#keyOverlay').onclick = (e) => { if (e.target.id === 'keyOverlay') $('#keyOverlay').classList.remove('show'); };
+$('#keyInput').onkeydown = (e) => { if (e.key === 'Enter') $('#keySave').click(); else if (e.key === 'Escape') $('#keyOverlay').classList.remove('show'); };
+
 $('#backBtn').onclick = () => { leaveReader(); showView('library'); };
-$('#revealBtn').onclick = () => currentReader && api.revealOriginal(currentReader.id);
 $('#deleteBtn').onclick = async () => {
   if (!currentReader) return;
   if (!confirm('Delete this article and all its annotations?')) return;
@@ -1207,6 +1300,7 @@ document.addEventListener('keydown', (e) => {
   const typing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
 
   if (e.key === 'Escape') {
+    if ($('#keyOverlay').classList.contains('show')) { $('#keyOverlay').classList.remove('show'); e.preventDefault(); return; }
     if ($('#kbdOverlay').classList.contains('show')) { toggleKbd(false); e.preventDefault(); return; }
     if ($('#popover').classList.contains('show')) { hidePopover(); window.getSelection().removeAllRanges(); e.preventDefault(); return; }
     if (typing) { ae.blur(); return; }
