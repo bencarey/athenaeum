@@ -27,10 +27,9 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build DMG
+        # No Apple Developer ID on the runner; electron-builder falls back to
+        # ad-hoc signing (required for arm64 apps to launch).
         run: npm run build:mac
-        env:
-          # No Apple Developer ID on the runner: ad-hoc sign, like local builds.
-          CSC_IDENTITY_AUTO_DISCOVERY: false
 
       - name: Publish release
         uses: softprops/action-gh-release@v2
