@@ -62,8 +62,18 @@ Requires Node.js and npm. `npm run setup` is only needed for PDF import; DOCX an
 ## Build
 
 ```bash
-npm run setup       # ensure resources/pyenv exists first
+npm run setup       # download the portable Python environment (PDF support)
 npm run build:mac   # electron-builder -> dist/Athenaeum-<version>.dmg
 ```
 
-The DMG bundles the Python environment via electron-builder `extraResources`. PDF conversion relies on a Python install being present on the machine the environment was built from.
+`npm run setup` fetches a self-contained [python-build-standalone](https://github.com/astral-sh/python-build-standalone) distribution and installs PyMuPDF into it, so the bundled environment is fully relocatable — the DMG works on any Apple Silicon Mac, with PDF support, no system Python required.
+
+## Releases
+
+Releases are built automatically by GitHub Actions. To cut one:
+
+```bash
+npm run release     # bumps the patch version, tags it, and pushes the tag
+```
+
+Pushing a `v*` tag triggers [`.github/workflows/release.yml`](.github/workflows/release.yml), which builds the DMG on a macOS runner and publishes it to a GitHub Release. Download the latest from the [releases page](../../releases/latest).

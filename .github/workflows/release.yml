@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-14 # Apple Silicon (arm64)
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build portable Python (PDF support)
+        run: npm run setup
+
+      - name: Build DMG
+        run: npm run build:mac
+        env:
+          # No Apple Developer ID on the runner: ad-hoc sign, like local builds.
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Athenaeum ${{ github.ref_name }}
+          files: dist/Athenaeum-*.dmg
+          body: |
+            ## Install
+
+            1. Download **Athenaeum-*.dmg** below
+            2. Open the DMG and drag **Athenaeum** to **Applications**
+            3. In Terminal, run:
+               ```bash
+               xattr -dr com.apple.quarantine "/Applications/Athenaeum.app"
+               ```
+            4. Double-click **Athenaeum** in Applications
+
+            > Ad-hoc signed, not notarized. Step 3 is a one-time per-machine step
+            > to clear the macOS quarantine flag. Apple Silicon (arm64).

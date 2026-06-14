@@ -6,7 +6,8 @@
   "scripts": {
     "start": "electron .",
     "setup": "bash scripts/setup.sh",
-    "build:mac": "electron-builder --mac"
+    "build:mac": "electron-builder --mac",
+    "release": "npm version patch && git push --follow-tags"
   },
   "dependencies": {
     "@mozilla/readability": "^0.5.0",
