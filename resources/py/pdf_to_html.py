@@ -51,16 +51,51 @@ def find_chart_rects(page, table_rects):
         # don't rasterize tables
         if any(_overlap_frac(rc, tr) > 0.3 or _overlap_frac(tr, rc) > 0.6 for tr in table_rects):
             continue
+        # Enough vector strokes to be a chart/diagram. Simple line charts have very
+        # few paths (a handful of lines + axes), so keep this low; ruled tables are
+        # already excluded above via find_tables().
         contained = [d for d in drawings if rc.intersects(d["rect"])]
-        if len(contained) < 14:
-            continue
-        # a chart has fills/curves, not just a few ruling lines (which is a table)
-        fills = sum(1 for d in contained if d.get("fill") is not None or d.get("type") in ("f", "fs"))
-        if len(contained) < 30 and fills < 2:
+        if len(contained) < 4:
             continue
         out.append(rc)
     out.sort(key=lambda r: r.y0)
     return out
+
+
+def expand_with_labels(page, rc):
+    """Grow a chart rect to swallow adjacent axis/legend labels (small, short text
+    blocks) so they are rasterized into the chart image and removed from the prose.
+    Title/body text (larger font, many lines) is left alone."""
+    import fitz
+    # grow toward the sides and bottom (axis/legend labels live there); barely
+    # upward, so a chart title sitting just above is preserved as a heading.
+    grown = (rc + (-22, -6, 22, 24)) & page.rect
+    base_area = abs(rc.width * rc.height) or 1
+    out = fitz.Rect(rc)
+    try:
+        blocks = page.get_text("dict").get("blocks", [])
+    except Exception:
+        return out
+    for b in blocks:
+        if b.get("type") != 0:
+            continue
+        bb = fitz.Rect(b["bbox"])
+        if bb.height > 28:  # a tall block is a paragraph, not an axis/legend row
+            continue
+        lines = b.get("lines", [])
+        sizes = [s["size"] for ln in lines for s in ln.get("spans", [])]
+        if not sizes or (sum(sizes) / len(sizes)) > 12:
+            continue
+        if not grown.intersects(bb):
+            continue
+        inter = bb & grown
+        if abs(inter.width * inter.height) < 0.55 * (abs(bb.width * bb.height) or 1):
+            continue
+        cand = out | bb
+        if abs(cand.width * cand.height) > 2.4 * base_area:
+            continue
+        out = cand
+    return out & page.rect
 
 
 def main():
@@ -105,6 +140,7 @@ def main():
             continue
         names = []
         for i, rc in enumerate(rects):
+            rc = expand_with_labels(page, rc)
             clip = (rc + (-4, -4, 4, 4)) & page.rect
             try:
                 pix = page.get_pixmap(clip=clip, dpi=150)

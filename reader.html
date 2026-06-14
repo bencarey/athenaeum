@@ -20,6 +20,7 @@
     --ink: #111111; --ink-max: #000000; --ink-2: #3A3A3C; --ink-3: #6E6E73; --ink-4: #A1A1A6;
     --line: #D1D2D4; --line-strong: #AFB0B0; --line-faint: #E7E8EA;
     --mark: rgba(17,17,17,0.10); --mark-strong: rgba(17,17,17,0.20);
+    --hl: #FFE45C; --hl-strong: #FFD021;
     --on-ink: #FFFFFF;
     --sans: -apple-system, BlinkMacSystemFont, "Inter", "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
     --serif: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia, serif;
@@ -76,6 +77,7 @@
   .btn--outline:hover { color: var(--ink); border-color: var(--ink); opacity: 1; }
   .btn--ghost { background: none; border: none; color: var(--ink-3); padding: 0; height: auto; letter-spacing: 0.1em; }
   .btn--ghost:hover { color: var(--ink); }
+  .btn--ghost.off { color: var(--ink-4); text-decoration: line-through; }
 
   /* tag filter */
   .tag-bar { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 22px; min-height: 4px; }
@@ -138,20 +140,53 @@
   .rate-ticks i.on { background: var(--ink); }
   .rate-line b { font-weight: 600; color: var(--ink); }
 
-  .reader-grid { display: grid; grid-template-columns: minmax(0,1fr) 250px; gap: 30px; margin-top: 30px; align-items: start; }
-  @media (max-width: 860px) { .reader-grid { grid-template-columns: 1fr; } .rail { display: none; } }
+  /* 1/4 · 1/2 · 1/4 proportional columns; either side panel can collapse */
+  .reader-grid { display: grid; grid-template-columns: minmax(190px,1fr) minmax(0,2fr) minmax(190px,1fr); gap: 36px; margin-top: 30px; align-items: start; }
+  #view-reader.no-toc .reader-grid { grid-template-columns: minmax(0,3fr) minmax(200px,1fr); }
+  #view-reader.no-rail .reader-grid { grid-template-columns: minmax(200px,1fr) minmax(0,3fr); }
+  #view-reader.no-toc.no-rail .reader-grid { grid-template-columns: minmax(0,1fr); }
+  #view-reader.no-toc .toc { display: none; }
+  #view-reader.no-rail .rail { display: none; }
+  @media (max-width: 1180px) {
+    .toc { display: none !important; }
+    .reader-grid { grid-template-columns: minmax(0,1fr) minmax(190px,270px) !important; }
+    #view-reader.no-rail .reader-grid { grid-template-columns: minmax(0,1fr) !important; }
+  }
+  @media (max-width: 900px) {
+    .toc, .rail { display: none !important; }
+    .reader-grid { grid-template-columns: 1fr !important; }
+  }
 
   /* wide mode: break the reader out of the centered frame to ~90% of the window */
   #view-reader.wide { width: 90vw; margin-left: 50%; transform: translateX(-50%); }
-  #view-reader.wide .prose { max-width: none; }
-  #view-reader.wide .reader-grid { grid-template-columns: minmax(0,1fr) 300px; gap: 48px; }
+  #view-reader.wide .prose { max-width: 1180px; }
+
+  /* table of contents sidebar */
+  .toc { position: sticky; top: 16px; max-height: calc(100vh - 56px); overflow-y: auto; padding-right: 2px; }
+  .toc-label { font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase; color: var(--ink-4); margin: 0 0 10px; }
+  .toc-list { list-style: none; margin: 0 0 24px; }
+  .toc-item { display: block; font-size: 12.5px; line-height: 1.3; color: var(--ink-3); cursor: pointer; padding: 4px 8px; border-left: 2px solid transparent; transition: color 100ms, background 100ms; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .toc-item:hover { color: var(--ink); background: var(--surface); }
+  .toc-item.lvl2 { padding-left: 18px; }
+  .toc-item.lvl3 { padding-left: 28px; font-size: 11.5px; color: var(--ink-4); }
+  .toc-item.active { color: var(--ink); border-left-color: var(--ink); font-weight: 600; }
+  .toc-bookmark { display: flex; align-items: center; gap: 7px; font-size: 12px; color: #4a4220; background: var(--hl); border-radius: 7px; padding: 8px 10px; margin-bottom: 18px; cursor: pointer; }
+  .toc-bookmark .bm-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .toc-bookmark .bm-x { margin-left: auto; color: #7a6f2a; cursor: pointer; font-size: 13px; flex-shrink: 0; }
+  .toc-bookmark .bm-x:hover { color: #000; }
+  .toc-thumbs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 8px; }
+  .thumb { position: relative; border: 1px solid var(--line-faint); border-radius: 6px; overflow: hidden; background: var(--surface); cursor: pointer; aspect-ratio: 4 / 3; }
+  .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .thumb .copy { position: absolute; top: 4px; right: 4px; background: rgba(0,0,0,0.62); color: #fff; border: none; font-size: 8px; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 6px; border-radius: 4px; cursor: pointer; opacity: 0; transition: opacity 100ms; }
+  .thumb:hover .copy { opacity: 1; }
 
   /* article prose */
-  .prose { max-width: 680px; font-size: 17px; line-height: 1.65; color: var(--ink); }
-  .prose h1 { font-size: 1.7em; font-weight: 700; letter-spacing: -0.02em; line-height: 1.15; margin: 1.6em 0 0.5em; }
-  .prose h2 { font-size: 1.35em; font-weight: 700; letter-spacing: -0.015em; margin: 1.5em 0 0.5em; }
-  .prose h3 { font-size: 1.12em; font-weight: 700; margin: 1.3em 0 0.4em; }
-  .prose h1:first-child, .prose h2:first-child { margin-top: 0; }
+  .prose { max-width: 820px; font-size: 17px; line-height: 1.65; color: var(--ink); }
+  .prose h1 { font-size: 2.05em; font-weight: 700; letter-spacing: -0.024em; line-height: 1.12; margin: 1.7em 0 0.55em; }
+  .prose h2 { font-size: 1.58em; font-weight: 700; letter-spacing: -0.018em; line-height: 1.18; margin: 1.6em 0 0.5em; }
+  .prose h3 { font-size: 1.26em; font-weight: 700; letter-spacing: -0.01em; margin: 1.4em 0 0.4em; }
+  .prose h1, .prose h2, .prose h3 { background: var(--surface); border: 1px solid var(--line-faint); border-radius: 8px; padding: 0.36em 0.62em; scroll-margin-top: 18px; }
+  .prose h1:first-child, .prose h2:first-child, .prose h3:first-child { margin-top: 0; }
   .prose p { margin: 0 0 1.05em; }
   .prose ul, .prose ol { margin: 0 0 1.1em 1.3em; }
   .prose li { margin: 0.3em 0; }
@@ -170,10 +205,10 @@
   .prose img { cursor: crosshair; }
 
   /* highlights */
-  mark.hl { background: var(--mark); color: inherit; border-radius: 2px; padding: 0.05em 0; box-decoration-break: clone; -webkit-box-decoration-break: clone; cursor: pointer; }
-  mark.hl[data-comment="1"] { box-shadow: inset 0 -2px 0 var(--ink-3); background: var(--mark); }
-  mark.hl.overlap { background: var(--mark-strong); }
-  mark.hl.focus { background: var(--mark-strong); box-shadow: inset 0 -2px 0 var(--ink); }
+  mark.hl { background: var(--hl); color: #1a1708; border-radius: 2px; padding: 0.05em 0; box-decoration-break: clone; -webkit-box-decoration-break: clone; cursor: pointer; }
+  mark.hl[data-comment="1"] { box-shadow: inset 0 -2px 0 #6f6a3c; }
+  mark.hl.overlap { background: var(--hl-strong); }
+  mark.hl.focus { background: var(--hl-strong); box-shadow: inset 0 -2px 0 #111; }
 
   /* comment rail */
   .rail { position: relative; }
@@ -278,6 +313,9 @@
         <div class="reader-sub" id="readerSub"></div>
       </div>
       <div class="reader-actions">
+        <button class="btn--ghost" id="tocToggle" title="Show/hide contents">Contents</button>
+        <button class="btn--ghost" id="railToggle" title="Show/hide notes">Notes</button>
+        <button class="btn--ghost" id="bookmarkBtn" title="Bookmark this spot (B)">Bookmark</button>
         <button class="btn--ghost" id="wideBtn">Wide</button>
         <button class="btn--ghost" id="revealBtn">Original</button>
         <button class="btn--ghost" id="deleteBtn">Delete</button>
@@ -288,6 +326,7 @@
       <div class="rating" id="readerRating"></div>
     </div>
     <div class="reader-grid">
+      <aside class="toc" id="toc"></aside>
       <article class="prose" id="articleBody"></article>
       <aside class="rail" id="rail"></aside>
     </div>
@@ -509,13 +548,17 @@ async function openReader(id) {
   $('#articleBody').innerHTML = html.replace(/(src|href)="(?!https?:|file:|mailto:|#)([^"]+)"/g,
     (_, attr, url) => `${attr}="${baseUrl}${url.replace(/^\.?\//, '')}"`);
 
+  assignHeadingIds();
   prepareImages();
   restoreHighlights();
 
   showView('reader');
   setWide(!!loadPrefs().wide, false);
+  applyPanels();
   renderRail();
   renderImagePins();
+  renderTOC();
+  restoreBookmark();
   startReadClock();
 }
 
@@ -528,6 +571,17 @@ $('#wideBtn').onclick = () => {
   const p = loadPrefs(); p.wide = !p.wide; savePrefs(p);
   setWide(p.wide, true);
 };
+
+function applyPanels() {
+  const p = loadPrefs();
+  const v = $('#view-reader');
+  v.classList.toggle('no-toc', !!p.noToc);
+  v.classList.toggle('no-rail', !!p.noRail);
+  $('#tocToggle').classList.toggle('off', !!p.noToc);
+  $('#railToggle').classList.toggle('off', !!p.noRail);
+}
+$('#tocToggle').onclick = () => { const p = loadPrefs(); p.noToc = !p.noToc; savePrefs(p); applyPanels(); if (currentReader) { renderRail(); renderImagePins(); } };
+$('#railToggle').onclick = () => { const p = loadPrefs(); p.noRail = !p.noRail; savePrefs(p); applyPanels(); if (currentReader) { renderRail(); renderImagePins(); } };
 
 function renderReaderSub() {
   const m = currentReader.meta;
@@ -958,6 +1012,173 @@ function renderImagePins() {
     });
   });
 }
+
+// ==================================================================
+// TABLE OF CONTENTS · THUMBNAILS · BOOKMARK
+// ==================================================================
+function assignHeadingIds() {
+  $('#articleBody').querySelectorAll('h1,h2,h3').forEach((h, i) => { h.id = 'sec-' + i; });
+}
+
+function renderTOC() {
+  const toc = $('#toc');
+  if (!currentReader) { toc.innerHTML = ''; return; }
+  const body = $('#articleBody');
+  const heads = [...body.querySelectorAll('h1,h2,h3')];
+  const figs = [...body.querySelectorAll('figure img')];
+  let html = '';
+
+  const bm = currentReader.meta.bookmark;
+  if (bm && bm.exact) {
+    html += `<div class="toc-bookmark" id="tocBookmark" title="Jump to bookmark">
+      <span>&#128278;</span><span class="bm-text">${esc(bm.label || bm.exact.slice(0, 42))}</span>
+      <span class="bm-x" data-bm-remove="1" title="Remove bookmark">&times;</span></div>`;
+  }
+  if (heads.length) {
+    html += `<div class="toc-label">Contents</div><ul class="toc-list">`;
+    heads.forEach(h => {
+      html += `<li class="toc-item lvl${h.tagName[1]}" data-sec="${h.id}" title="${esc(h.textContent.trim())}">${esc(h.textContent.trim().slice(0, 80))}</li>`;
+    });
+    html += `</ul>`;
+  }
+  if (figs.length) {
+    html += `<div class="toc-label">Figures (${figs.length})</div><div class="toc-thumbs">`;
+    figs.forEach((img, i) => {
+      html += `<div class="thumb" data-fig="${i}" title="Jump to figure"><img src="${img.getAttribute('src')}" loading="lazy" alt=""><button class="copy" data-copy="${i}">Copy</button></div>`;
+    });
+    html += `</div>`;
+  }
+  toc.innerHTML = html || '<div class="toc-label">No sections</div>';
+
+  toc.querySelectorAll('.toc-item').forEach(it => it.onclick = () => {
+    const el = document.getElementById(it.dataset.sec);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+  toc.querySelectorAll('.thumb').forEach(t => t.onclick = (e) => {
+    if (e.target.dataset.copy !== undefined) return;
+    const fig = figs[+t.dataset.fig];
+    if (fig) fig.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  });
+  toc.querySelectorAll('.copy').forEach(b => b.onclick = (e) => { e.stopPropagation(); copyFigure(figs[+b.dataset.copy], b); });
+  const bmEl = $('#tocBookmark');
+  if (bmEl) bmEl.onclick = (e) => {
+    if (e.target.dataset.bmRemove) { removeBookmark(); return; }
+    scrollToAnchor(currentReader.meta.bookmark, 'smooth');
+  };
+}
+
+async function copyFigure(img, btn) {
+  if (!img) return;
+  const path = decodeURI((img.getAttribute('src') || '').replace(/^file:\/\//, ''));
+  const ok = await api.copyImage(path);
+  if (btn) { const t = btn.textContent; btn.textContent = ok ? 'Copied' : 'Failed'; setTimeout(() => { btn.textContent = t; }, 1100); }
+}
+
+// scroll-spy: highlight the current section in the TOC
+let tocSpyRAF = 0;
+window.addEventListener('scroll', () => {
+  if (!currentReader) return;
+  cancelAnimationFrame(tocSpyRAF);
+  tocSpyRAF = requestAnimationFrame(() => {
+    const heads = [...$('#articleBody').querySelectorAll('h1,h2,h3')];
+    let cur = null;
+    for (const h of heads) { if (h.getBoundingClientRect().top <= 130) cur = h; else break; }
+    document.querySelectorAll('#toc .toc-item').forEach(it => it.classList.toggle('active', !!cur && it.dataset.sec === cur.id));
+  });
+}, { passive: true });
+
+// ---- bookmark ----
+function captureBookmark() {
+  const body = $('#articleBody');
+  const blocks = [...body.querySelectorAll('p,h1,h2,h3,li,blockquote,figure,table')];
+  let target = null;
+  for (const el of blocks) { if (el.getBoundingClientRect().bottom > 60) { target = el; break; } }
+  target = target || blocks[0];
+  if (!target) return null;
+  const { T } = buildIndex(body);
+  const start = globalOffset(body, target, 0);
+  return {
+    exact: T.slice(start, start + 48),
+    prefix: T.slice(Math.max(0, start - 32), start),
+    suffix: T.slice(start + 48, start + 80),
+    start,
+    label: (target.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 46)
+  };
+}
+async function toggleBookmark() {
+  if (!currentReader) return;
+  const bm = captureBookmark();
+  if (!bm) return;
+  currentReader.meta = await api.updateMeta(currentReader.id, { bookmark: bm });
+  renderTOC(); toast('Bookmarked');
+}
+async function removeBookmark() {
+  if (!currentReader) return;
+  currentReader.meta = await api.updateMeta(currentReader.id, { bookmark: null });
+  renderTOC(); toast('Bookmark removed');
+}
+function scrollToAnchor(anchor, behavior) {
+  if (!anchor || !anchor.exact) return false;
+  const body = $('#articleBody');
+  const { T, index } = buildIndex(body);
+  const r = (T.slice(anchor.start, anchor.start + anchor.exact.length) === anchor.exact)
+    ? { s: anchor.start } : resolveAnchor(anchor, T);
+  if (!r) return false;
+  const loc = locate(index, r.s, false);
+  if (!loc) return false;
+  (loc.node.parentElement || loc.node).scrollIntoView({ behavior: behavior || 'auto', block: 'start' });
+  return true;
+}
+function restoreBookmark() {
+  const bm = currentReader && currentReader.meta.bookmark;
+  if (!bm) return;
+  const go = () => scrollToAnchor(bm, 'auto');
+  requestAnimationFrame(() => requestAnimationFrame(go));
+  setTimeout(go, 350);
+  // re-scroll once images finish loading and shift the layout
+  const imgs = [...$('#articleBody').querySelectorAll('img')];
+  let pending = imgs.length;
+  imgs.forEach(im => {
+    if (im.complete) { if (--pending === 0) setTimeout(go, 40); }
+    else im.addEventListener('load', () => { if (--pending <= 0) setTimeout(go, 40); }, { once: true });
+  });
+}
+$('#bookmarkBtn').onclick = toggleBookmark;
+
+// ==================================================================
+// HOTKEYS
+// ==================================================================
+function currentSelection() {
+  const sel = window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
+  const range = sel.getRangeAt(0);
+  const root = $('#articleBody');
+  if (!root.contains(range.commonAncestorContainer) || !range.toString().trim()) return null;
+  return { range, rect: range.getBoundingClientRect(), anchor: makeAnchor(root, range) };
+}
+document.addEventListener('keydown', (e) => {
+  const ae = document.activeElement;
+  const typing = ae && (ae.tagName === 'INPUT' || ae.tagName === 'TEXTAREA' || ae.isContentEditable);
+
+  if (e.key === 'Escape') {
+    if ($('#popover').classList.contains('show')) { hidePopover(); window.getSelection().removeAllRanges(); e.preventDefault(); return; }
+    if (typing) { ae.blur(); return; }
+    if (currentReader) { leaveReader(); showView('library'); e.preventDefault(); }
+    return;
+  }
+  if (typing || e.metaKey || e.ctrlKey || e.altKey || !currentReader) return;
+
+  const k = e.key.toLowerCase();
+  if (k === 'h' || k === 'c') {
+    const info = currentSelection();
+    if (!info) return;
+    e.preventDefault();
+    if (k === 'h') { addAnno(info.anchor, 'highlight', null); hidePopover(); window.getSelection().removeAllRanges(); }
+    else startComment(info.rect, info.anchor);
+  } else if (k === 'b') {
+    e.preventDefault(); toggleBookmark();
+  }
+});
 
 // ==================================================================
 // QUOTES

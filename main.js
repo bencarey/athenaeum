@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, Menu, shell, clipboard, nativeImage } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -483,6 +483,15 @@ ipcMain.handle('reveal-original', (_, id) => {
 });
 
 ipcMain.handle('open-external', (_, url) => shell.openExternal(url));
+
+ipcMain.handle('copy-image', (_, absPath) => {
+  try {
+    const img = nativeImage.createFromPath(absPath);
+    if (img.isEmpty()) return false;
+    clipboard.writeImage(img);
+    return true;
+  } catch { return false; }
+});
 
 // ----- window ---------------------------------------------------------------
 

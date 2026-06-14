@@ -19,5 +19,6 @@ contextBridge.exposeInMainWorld('api', {
   writeQuotes:        (data)        => ipcRenderer.invoke('write-quotes', data),
   revealOriginal:     (id)          => ipcRenderer.invoke('reveal-original', id),
   openExternal:       (url)         => ipcRenderer.invoke('open-external', url),
+  copyImage:          (path)        => ipcRenderer.invoke('copy-image', path),
   onMenu:             (cb)          => ipcRenderer.on('menu', (_, action) => cb(action))
 });
