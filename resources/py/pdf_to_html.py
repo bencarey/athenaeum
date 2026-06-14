@@ -62,6 +62,86 @@ def find_chart_rects(page, table_rects):
     return out
 
 
+def is_graphic_table(tab):
+    """True when find_tables() detected what is really a designed 'exhibit'
+    infographic, not a data table: cells hold wrapped prose / phrases and the
+    grid is sparse. Such tables shred into unreadable HTML in a narrow reading
+    column, so we rasterize them instead. Genuine data tables (short numeric or
+    label cells, densely filled) return False and stay as real tables."""
+    try:
+        rows = tab.extract()
+    except Exception:
+        return False
+    if not rows:
+        return False
+    ncols = max((len(r) for r in rows), default=0)
+    cells = [c for r in rows for c in r]
+    filled = [re.sub(r"\s+", " ", c).strip() for c in cells if c and c.strip()]
+    n_cells = len(cells) or 1
+    if not filled or ncols < 3:
+        return False
+    lens = [len(c) for c in filled]
+    avg_len = sum(lens) / len(lens)
+    # Genuine 'infographic' tables fill every cell with full sentences (very high
+    # average length). Real data tables — even sparse ones or ones with verbose
+    # multi-line headers — keep short data cells (avg well under 100), so they stay
+    # readable tables. A long header alone must not trip this.
+    return avg_len > 120
+
+
+def find_exhibit_rects(page, fitz):
+    """McKinsey-style 'Exhibit N' infographics are drawn as a grid of small shaded
+    cells / icons with short text labels. pymupdf4llm shreds them into unreadable
+    markdown tables, and the cells are too small/fragmented for the chart detector.
+    Detect them by the 'Exhibit N' marker plus a cluster of small vector cells, and
+    return the graphic-body rect to rasterize. The 'Exhibit N' marker, title and
+    subtitle (large font, above the grid) and any source/footnote lines sit outside
+    the returned rect, so they stay as readable text."""
+    d = page.get_text("dict")
+    if not any(
+        re.match(r"^Exhibit\s+\d+\s*$", "".join(s["text"] for s in ln.get("spans", [])).strip())
+        for b in d.get("blocks", []) if b.get("type") == 0
+        for ln in b.get("lines", [])
+    ):
+        return []
+    try:
+        clusters = page.cluster_drawings()
+    except Exception:
+        return []
+    pw, ph = page.rect.width, page.rect.height
+    parea = pw * ph or 1
+    # small grid cells / icons: little boxes, not full-width rules or big panels
+    cells = [c for c in clusters
+             if not (c.is_empty or c.is_infinite)
+             and abs(c.width * c.height) / parea < 0.25
+             and c.width < 0.9 * pw]
+    if len(cells) < 5:
+        return []
+    union = fitz.Rect(cells[0])
+    for c in cells[1:]:
+        union |= c
+    # grow to swallow the grid's own short text labels, but never long body
+    # paragraphs (those stay as prose) or large-font headings.
+    grown = (union + (-34, -18, 46, 26)) & page.rect
+    out = fitz.Rect(union)
+    for b in d.get("blocks", []):
+        if b.get("type") != 0:
+            continue
+        bb = fitz.Rect(b["bbox"])
+        if not grown.intersects(bb):
+            continue
+        sizes = [s["size"] for ln in b.get("lines", []) for s in ln.get("spans", [])]
+        if not sizes or (sum(sizes) / len(sizes)) > 13:
+            continue  # leave titles/headings as text
+        txt = " ".join(s["text"] for ln in b.get("lines", []) for s in ln.get("spans", [])).strip()
+        if len(txt) > 90:
+            continue  # a paragraph, not a grid label
+        cand = out | bb
+        if abs(cand.width * cand.height) / parea < 0.85:
+            out = cand
+    return [out]
+
+
 def expand_with_labels(page, rc):
     """Grow a chart rect to swallow adjacent axis/legend labels (small, short text
     blocks) so they are rasterized into the chart image and removed from the prose.
@@ -269,11 +349,22 @@ def main():
     for pno in range(page_count):
         page = doc[pno]
         try:
-            table_rects = [fitz.Rect(t.bbox) for t in page.find_tables().tables]
+            found = page.find_tables().tables
         except Exception:
-            table_rects = []
-        charts = find_chart_rects(page, table_rects)
+            found = []
+        # graphic 'exhibit' tables get rasterized like charts; real data tables
+        # stay tables and keep blocking chart detection over their region.
+        exhibit_ids = {id(t) for t in found if is_graphic_table(t)}
+        real_table_rects = [fitz.Rect(t.bbox) for t in found if id(t) not in exhibit_ids]
+        exhibit_rects = [fitz.Rect(t.bbox) for t in found if id(t) in exhibit_ids]
+        charts = find_chart_rects(page, real_table_rects)
         targets = [expand_with_labels(page, rc) for rc in charts]
+        targets += [(rc + (-10, -8, 10, 12)) & page.rect for rc in exhibit_rects]
+        # 'Exhibit N' infographic grids that pymupdf4llm would shred into junk tables
+        for rc in find_exhibit_rects(page, fitz):
+            if any(_overlap_frac(rc, t) > 0.5 for t in targets):
+                continue  # already covered by a chart/table raster
+            targets.append((rc + (-6, -6, 6, 8)) & page.rect)
         names = []
         for i, rc in enumerate(targets):
             clip = (rc + (-4, -4, 4, 4)) & page.rect
