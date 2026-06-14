@@ -15,10 +15,22 @@ extraResources:
   - from: resources/py
     to: py
 mac:
+  icon: icon.icns
   category: public.app-category.productivity
   target:
     - dmg
-  hardenedRuntime: true
-  gatekeeperAssess: false
 dmg:
-  title: Athenaeum
+  artifactName: Athenaeum-${version}.${ext}
+  title: Athenaeum ${version}
+  background: build/dmg_background.png
+  window:
+    width: 540
+    height: 380
+  contents:
+    - x: 150
+      y: 190
+      type: file
+    - x: 390
+      y: 190
+      type: link
+      path: /Applications
