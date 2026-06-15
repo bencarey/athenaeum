@@ -78,6 +78,15 @@
   .btn--ghost { background: none; border: none; color: var(--ink-3); padding: 0; height: auto; letter-spacing: 0.1em; }
   .btn--ghost:hover { color: var(--ink); }
   .btn--ghost.off { color: var(--ink-4); text-decoration: line-through; }
+  .btn--ghost.on { color: var(--ink); font-weight: 600; }
+
+  /* drag-and-drop overlay */
+  .drop-overlay { position: fixed; inset: 0; z-index: 900; display: none; align-items: center; justify-content: center; background: rgba(17,17,17,0.42); backdrop-filter: blur(2px); }
+  .drop-overlay.show { display: flex; }
+  .drop-card { display: flex; flex-direction: column; align-items: center; gap: 8px; background: var(--surface); border: 2px dashed var(--line-strong); border-radius: 18px; padding: 48px 72px; box-shadow: 0 18px 50px rgba(0,0,0,0.25); pointer-events: none; }
+  .drop-ic { font-size: 34px; line-height: 1; color: var(--ink-2); }
+  .drop-title { font-size: 17px; font-weight: 600; color: var(--ink); letter-spacing: -0.01em; }
+  .drop-sub { font-size: 11px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-4); }
 
   /* tag filter */
   .tag-bar { display: flex; flex-wrap: wrap; gap: 7px; margin-bottom: 22px; min-height: 4px; }
@@ -107,6 +116,11 @@
   .lib-meta { text-align: right; font-size: 11px; color: var(--ink-4); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; line-height: 1.5; }
   .lib-meta .progress { display: inline-block; width: 70px; height: 3px; background: var(--line); border-radius: 2px; margin-top: 6px; overflow: hidden; }
   .lib-meta .progress span { display: block; height: 100%; background: var(--ink-3); }
+  .lib-meta .read-toggle { cursor: pointer; color: var(--ink-4); letter-spacing: 0.04em; }
+  .lib-meta .read-toggle:hover { color: var(--ink); }
+  .lib-meta .read-toggle.on { color: var(--ink-2); font-weight: 600; }
+  .lib-row.read { opacity: 0.6; transition: opacity 120ms; }
+  .lib-row.read:hover { opacity: 1; }
   .empty { padding: 60px 0; text-align: center; color: var(--ink-3); }
   .empty .mark { margin: 0 auto 22px; display: block; }
   .empty p { font-size: 14px; margin-bottom: 22px; color: var(--ink-3); }
@@ -307,6 +321,14 @@
 <body>
 <div class="drag-bar"></div>
 
+<div class="drop-overlay" id="dropOverlay">
+  <div class="drop-card">
+    <div class="drop-ic">↧</div>
+    <div class="drop-title">Drop to add</div>
+    <div class="drop-sub">PDF · Word · HTML</div>
+  </div>
+</div>
+
 <div class="frame">
   <header class="topbar">
     <div class="brand">
@@ -354,6 +376,7 @@
         <div class="reader-sub" id="readerSub"></div>
       </div>
       <div class="reader-actions">
+        <button class="btn--ghost" id="readBtn">Mark read</button>
         <button class="btn--ghost" id="wideBtn">Wide</button>
         <button class="btn--ghost" id="deleteBtn">Delete</button>
       </div>
@@ -546,13 +569,17 @@ function renderLibrary() {
   list.innerHTML = '';
   shown.forEach(a => {
     const li = document.createElement('li');
-    li.className = 'lib-row';
+    li.className = 'lib-row' + (a.read ? ' read' : '');
     const pct = a.readMinutes ? Math.min(100, Math.round(((a.timeSpentSeconds || 0) / 60) / a.readMinutes * 100)) : 0;
     const tagHtml = (a.tags || []).map(t => `<span class="tag mini">#${esc(t)}</span>`).join('');
     const rated = a.rating !== null && a.rating !== undefined;
     const rateHtml = rated
       ? `<div class="rate-line"><span class="rate-ticks">${Array.from({ length: 10 }, (_, i) => `<i class="${i < a.rating ? 'on' : ''}"></i>`).join('')}</span> <b>${a.rating}</b>/10</div>`
       : '';
+    const spentTxt = a.timeSpentSeconds ? fmtSpent(a.timeSpentSeconds) + ' spent · ' : '';
+    const readHtml = a.read
+      ? `<span class="read-toggle on" title="Mark as unread">✓ Read</span>`
+      : `${spentTxt}<span class="read-toggle" title="Mark as read">Mark read</span>`;
     li.innerHTML = `
       <div class="src-glyph">${SRC_GLYPH[a.sourceType] || 'DOC'}</div>
       <div class="lib-main">
@@ -562,9 +589,10 @@ function renderLibrary() {
       <div class="lib-meta">
         ${rateHtml}
         ${fmtDate(a.ingestedAt)} · ${fmtMins(a.readMinutes)} read<br>
-        ${(a.timeSpentSeconds ? fmtSpent(a.timeSpentSeconds) + ' spent' : 'unread')}
+        ${readHtml}
         <span class="progress"><span style="width:${pct}%"></span></span>
       </div>`;
+    li.querySelector('.read-toggle').onclick = (e) => { e.stopPropagation(); toggleRead(a); };
     li.onclick = () => openReader(a.id);
     list.appendChild(li);
   });
@@ -584,6 +612,50 @@ async function addDocuments() {
   await loadLibrary();
 }
 window.addDocuments = addDocuments;
+
+// mark read / unread (works from the library row and the reader header)
+async function toggleRead(a) {
+  const read = !a.read;
+  const patch = { read, readAt: read ? new Date().toISOString() : null };
+  const meta = await api.updateMeta(a.id, patch);
+  Object.assign(a, patch);
+  const cached = articles.find(x => x.id === a.id); if (cached) Object.assign(cached, patch);
+  if (currentReader && currentReader.id === a.id) { currentReader.meta = meta; renderReadBtn(); }
+  renderLibrary();
+}
+
+// ---- drag & drop documents anywhere in the window ----
+const SUPPORTED_EXT = ['pdf', 'docx', 'html', 'htm'];
+let dragDepth = 0;
+const isFileDrag = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+window.addEventListener('dragenter', (e) => {
+  if (!isFileDrag(e)) return;
+  e.preventDefault(); dragDepth++; $('#dropOverlay').classList.add('show');
+});
+window.addEventListener('dragover', (e) => {
+  if (!isFileDrag(e)) return;
+  e.preventDefault(); e.dataTransfer.dropEffect = 'copy';
+});
+window.addEventListener('dragleave', (e) => {
+  if (!isFileDrag(e)) return;
+  if (--dragDepth <= 0) { dragDepth = 0; $('#dropOverlay').classList.remove('show'); }
+});
+window.addEventListener('drop', async (e) => {
+  e.preventDefault();
+  dragDepth = 0; $('#dropOverlay').classList.remove('show');
+  const files = Array.from((e.dataTransfer && e.dataTransfer.files) || []);
+  if (!files.length) return;
+  const paths = files.map(f => api.pathForFile(f)).filter(Boolean);
+  const supported = paths.filter(p => SUPPORTED_EXT.includes(p.split('.').pop().toLowerCase()));
+  if (!supported.length) { toast('Drop a PDF, Word, or HTML file'); return; }
+  setSave('dirty');
+  toast(`Adding ${supported.length} document${supported.length > 1 ? 's' : ''}…`);
+  const res = await api.ingestPaths(supported);
+  setSave('idle');
+  if (res.errors && res.errors.length) res.errors.forEach(er => toast(`${er.file}: ${er.message}`));
+  if (res.added && res.added.length) toast(`Added ${res.added.length} document${res.added.length > 1 ? 's' : ''}`);
+  await loadLibrary();
+});
 
 async function refreshLibPill(cfg) {
   cfg = cfg || await api.getConfig();
@@ -609,6 +681,7 @@ async function openReader(id) {
   $('#readerTitle').textContent = meta.title || 'Untitled';
   renderReaderSub();
   renderRating();
+  renderReadBtn();
 
   // body: rewrite relative image/asset urls to absolute file urls
   const baseUrl = 'file://' + encodeURI(base.replace(/\\/g, '/'));
@@ -772,6 +845,13 @@ $('#deleteBtn').onclick = async () => {
   await api.deleteArticle(currentReader.id);
   leaveReader(); showView('library'); loadLibrary();
 };
+
+function renderReadBtn() {
+  const m = currentReader && currentReader.meta;
+  $('#readBtn').textContent = m && m.read ? '✓ Read' : 'Mark read';
+  $('#readBtn').classList.toggle('on', !!(m && m.read));
+}
+$('#readBtn').onclick = () => { if (currentReader) toggleRead(currentReader.meta); };
 
 // rename / tag via editable title
 $('#readerTitle').addEventListener('blur', async () => {

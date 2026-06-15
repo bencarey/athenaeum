@@ -1,9 +1,11 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('api', {
   getConfig:          ()            => ipcRenderer.invoke('get-config'),
   setLibraryPath:     ()            => ipcRenderer.invoke('set-library-path'),
   pickAndIngest:      ()            => ipcRenderer.invoke('pick-and-ingest'),
+  ingestPaths:        (paths)       => ipcRenderer.invoke('ingest-paths', paths),
+  pathForFile:        (file)        => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
   listArticles:       ()            => ipcRenderer.invoke('list-articles'),
   getStats:           ()            => ipcRenderer.invoke('get-stats'),
   readArticleHtml:    (id)          => ipcRenderer.invoke('read-article-html', id),

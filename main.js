@@ -385,6 +385,8 @@ async function ingestFile(srcPath) {
     imageCount,
     pageCount: conv.pages || null,
     rating: null,
+    read: false,
+    readAt: null,
     ingestedAt: new Date().toISOString(),
     timeSpentSeconds: 0,
     lastReadAt: null,
@@ -424,6 +426,19 @@ ipcMain.handle('set-library-path', async (event) => {
   return { libraryPath: libraryRoot() };
 });
 
+async function ingestPaths(filePaths) {
+  const added = [], errors = [];
+  for (const fp of filePaths) {
+    if (!EXT_TYPE[path.extname(fp).toLowerCase()]) {
+      errors.push({ file: path.basename(fp), message: 'Unsupported file type' });
+      continue;
+    }
+    try { added.push(await ingestFile(fp)); }
+    catch (e) { errors.push({ file: path.basename(fp), message: e.message }); }
+  }
+  return { added, errors };
+}
+
 ipcMain.handle('pick-and-ingest', async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const res = await dialog.showOpenDialog(win, {
@@ -433,13 +448,11 @@ ipcMain.handle('pick-and-ingest', async (event) => {
     filters: [{ name: 'Documents', extensions: ['pdf', 'docx', 'html', 'htm'] }]
   });
   if (res.canceled || !res.filePaths.length) return { added: [], errors: [] };
-  const added = [], errors = [];
-  for (const fp of res.filePaths) {
-    try { added.push(await ingestFile(fp)); }
-    catch (e) { errors.push({ file: path.basename(fp), message: e.message }); }
-  }
-  return { added, errors };
+  return ingestPaths(res.filePaths);
 });
+
+// drag-and-drop: the renderer resolves dropped File objects to absolute paths
+ipcMain.handle('ingest-paths', (_, paths) => ingestPaths(Array.isArray(paths) ? paths : []));
 
 ipcMain.handle('list-articles', () => listArticles());
 
