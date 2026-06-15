@@ -109,12 +109,24 @@ def find_exhibit_rects(page, fitz):
     def text(b):
         return " ".join(sp["text"] for ln in b.get("lines", []) for sp in ln.get("spans", [])).strip()
 
-    # locate the 'Exhibit N' marker (standalone, or at the start of the title line)
+    # locate an 'Exhibit/Figure/Chart N' marker — standalone, or at the start of a
+    # title line. Guarded against inline references ("Figure 1 shows ...") by
+    # requiring what follows the number to be empty, punctuation, or a capitalized
+    # title rather than a lowercase sentence continuation. The graphic-presence
+    # check below is the backstop: a caption with no figure under it never fires.
     ex_y = None
     for b in blocks:
-        first = text(b).split("  ")[0].strip()
-        if re.match(r"^Exhibit\s+\d+\b", first):
-            ex_y = b["bbox"][1] if ex_y is None else min(ex_y, b["bbox"][1])
+        lines = b.get("lines", [])
+        if not lines:
+            continue
+        line0 = "".join(s["text"] for s in lines[0].get("spans", [])).strip()
+        m = re.match(r"^(?:Exhibit|Figure|Chart)\s+\d+\b\s*(.*)$", line0)
+        if not m:
+            continue
+        rest = m.group(1).strip()
+        if rest and rest[0] not in ":.—–-" and not rest[0].isupper():
+            continue  # inline reference, e.g. "Figure 1 shows the trend"
+        ex_y = b["bbox"][1] if ex_y is None else min(ex_y, b["bbox"][1])
     if ex_y is None:
         return []
 
