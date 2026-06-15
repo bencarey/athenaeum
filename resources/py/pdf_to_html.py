@@ -90,56 +90,100 @@ def is_graphic_table(tab):
 
 
 def find_exhibit_rects(page, fitz):
-    """McKinsey-style 'Exhibit N' infographics are drawn as a grid of small shaded
-    cells / icons with short text labels. pymupdf4llm shreds them into unreadable
-    markdown tables, and the cells are too small/fragmented for the chart detector.
-    Detect them by the 'Exhibit N' marker plus a cluster of small vector cells, and
-    return the graphic-body rect to rasterize. The 'Exhibit N' marker, title and
-    subtitle (large font, above the grid) and any source/footnote lines sit outside
-    the returned rect, so they stay as readable text."""
-    d = page.get_text("dict")
-    if not any(
-        re.match(r"^Exhibit\s+\d+\s*$", "".join(s["text"] for s in ln.get("spans", [])).strip())
-        for b in d.get("blocks", []) if b.get("type") == 0
-        for ln in b.get("lines", [])
-    ):
-        return []
-    try:
-        clusters = page.cluster_drawings()
-    except Exception:
-        return []
+    """McKinsey-style 'Exhibit N' graphics (icon/shaded-cell grids, before/after
+    diagrams, comparison panels with embedded bars) get shredded by pymupdf4llm
+    into unreadable tables and their column/row labels leak as stray text. They
+    vary too much to detect by shape, but they share a layout: an 'Exhibit N'
+    marker, a large-font title, then a graphic *band* that runs full content width
+    until the next body heading or the page footer. We rasterize that whole band as
+    one image. The 'Exhibit N' marker and title sit above the band, so they stay as
+    readable text headings."""
+    blocks = [b for b in page.get_text("dict").get("blocks", []) if b.get("type") == 0]
     pw, ph = page.rect.width, page.rect.height
     parea = pw * ph or 1
-    # small grid cells / icons: little boxes, not full-width rules or big panels
-    cells = [c for c in clusters
-             if not (c.is_empty or c.is_infinite)
-             and abs(c.width * c.height) / parea < 0.25
-             and c.width < 0.9 * pw]
-    if len(cells) < 5:
+
+    def avgsz(b):
+        s = [sp["size"] for ln in b.get("lines", []) for sp in ln.get("spans", [])]
+        return sum(s) / len(s) if s else 0
+
+    def text(b):
+        return " ".join(sp["text"] for ln in b.get("lines", []) for sp in ln.get("spans", [])).strip()
+
+    # locate the 'Exhibit N' marker (standalone, or at the start of the title line)
+    ex_y = None
+    for b in blocks:
+        first = text(b).split("  ")[0].strip()
+        if re.match(r"^Exhibit\s+\d+\b", first):
+            ex_y = b["bbox"][1] if ex_y is None else min(ex_y, b["bbox"][1])
+    if ex_y is None:
         return []
-    union = fitz.Rect(cells[0])
-    for c in cells[1:]:
-        union |= c
-    # grow to swallow the grid's own short text labels, but never long body
-    # paragraphs (those stay as prose) or large-font headings.
-    grown = (union + (-34, -18, 46, 26)) & page.rect
-    out = fitz.Rect(union)
-    for b in d.get("blocks", []):
-        if b.get("type") != 0:
+
+    # band starts just below the title block(s): large-font lines near the marker
+    band_top = ex_y
+    for b in blocks:
+        y0 = b["bbox"][1]
+        if y0 < ex_y - 2 or y0 > ex_y + 70:
             continue
-        bb = fitz.Rect(b["bbox"])
-        if not grown.intersects(bb):
+        if avgsz(b) >= 10.5:
+            band_top = max(band_top, b["bbox"][3])
+
+    # band ends at the next body heading or full-width body paragraph (not a
+    # narrow exhibit column, which can also be long), else the page footer.
+    footer_y = ph - 34
+    band_bottom = footer_y
+    for b in sorted(blocks, key=lambda b: b["bbox"][1]):
+        y0 = b["bbox"][1]
+        if y0 <= band_top + 4 or y0 >= footer_y:
             continue
-        sizes = [s["size"] for ln in b.get("lines", []) for s in ln.get("spans", [])]
-        if not sizes or (sum(sizes) / len(sizes)) > 13:
-            continue  # leave titles/headings as text
-        txt = " ".join(s["text"] for ln in b.get("lines", []) for s in ln.get("spans", [])).strip()
-        if len(txt) > 90:
-            continue  # a paragraph, not a grid label
-        cand = out | bb
-        if abs(cand.width * cand.height) / parea < 0.85:
-            out = cand
-    return [out]
+        bw = b["bbox"][2] - b["bbox"][0]
+        sz, t = avgsz(b), text(b)
+        # A body resumption spans the full content width. Big exhibit figures
+        # ("5–10%", "80%") are also large-font but sit in narrow columns, so the
+        # width gate keeps them inside the band.
+        is_heading = sz >= 11 and bw > 0.5 * pw
+        is_body_para = 8.5 <= sz <= 10.8 and bw > 0.55 * pw and len(t) > 140
+        if is_heading or is_body_para:
+            band_bottom = y0 - 6
+            break
+    if band_bottom - band_top < 40:
+        return []
+
+    # the band must actually contain a graphic (drawing cluster or embedded image),
+    # else it is a plain text callout — leave it alone.
+    band = fitz.Rect(0, band_top, pw, band_bottom)
+    graphic = False
+    try:
+        for c in page.cluster_drawings():
+            if not (c.is_empty or c.is_infinite) and band.intersects(c):
+                graphic = True
+                break
+    except Exception:
+        pass
+    if not graphic:
+        for im in page.get_image_info():
+            ib = fitz.Rect(im["bbox"])
+            if band.intersects(ib) and abs(ib.width * ib.height) > 200:
+                graphic = True
+                break
+    if not graphic:
+        return []
+
+    # horizontal extent = span of everything sitting inside the band
+    x0, x1 = pw, 0.0
+    for b in blocks:
+        bb = b["bbox"]
+        if bb[1] >= band_top - 2 and bb[3] <= band_bottom + 2:
+            x0, x1 = min(x0, bb[0]), max(x1, bb[2])
+    for im in page.get_image_info():
+        ib = im["bbox"]
+        if ib[1] >= band_top - 2 and ib[3] <= band_bottom + 6:
+            x0, x1 = min(x0, ib[0]), max(x1, ib[2])
+    if x1 <= x0:
+        return []
+    rect = (fitz.Rect(x0, band_top, x1, band_bottom) + (-8, -6, 8, 6)) & page.rect
+    if abs(rect.width * rect.height) / parea > 0.9:
+        return []
+    return [rect]
 
 
 def expand_with_labels(page, rc):
@@ -358,13 +402,14 @@ def main():
         real_table_rects = [fitz.Rect(t.bbox) for t in found if id(t) not in exhibit_ids]
         exhibit_rects = [fitz.Rect(t.bbox) for t in found if id(t) in exhibit_ids]
         charts = find_chart_rects(page, real_table_rects)
-        targets = [expand_with_labels(page, rc) for rc in charts]
-        targets += [(rc + (-10, -8, 10, 12)) & page.rect for rc in exhibit_rects]
-        # 'Exhibit N' infographic grids that pymupdf4llm would shred into junk tables
-        for rc in find_exhibit_rects(page, fitz):
-            if any(_overlap_frac(rc, t) > 0.5 for t in targets):
-                continue  # already covered by a chart/table raster
-            targets.append((rc + (-6, -6, 6, 8)) & page.rect)
+        # 'Exhibit N' graphics: rasterize the whole exhibit band first. It takes
+        # precedence — any chart/graphic-table inside it is part of the same image,
+        # so we drop those sub-rasters to avoid clipping labels or double-capture.
+        exhibit_bands = find_exhibit_rects(page, fitz)
+        in_band = lambda rc: any(_overlap_frac(rc, band) > 0.4 for band in exhibit_bands)
+        targets = list(exhibit_bands)
+        targets += [expand_with_labels(page, rc) for rc in charts if not in_band(rc)]
+        targets += [(rc + (-10, -8, 10, 12)) & page.rect for rc in exhibit_rects if not in_band(rc)]
         names = []
         for i, rc in enumerate(targets):
             clip = (rc + (-4, -4, 4, 4)) & page.rect
@@ -442,7 +487,13 @@ def drop_blank_images(md, out_dir, fitz):
         full = os.path.join(out_dir, ref)
         try:
             pix = fitz.Pixmap(full)
-            if min(pix.samples) >= 250:
+            # Essentially blank: virtually every sample is near-white. A few stray
+            # dark pixels (redaction anti-aliasing, a hairline border) shouldn't keep
+            # a visually-empty image, so test the fraction rather than the minimum.
+            # Sample with a stride to stay fast on large full-page images.
+            sample = bytes(pix.samples[::7])
+            dark = sum(1 for v in sample if v < 240)
+            if dark / (len(sample) or 1) < 0.01:
                 blanks.add(ref)
                 os.remove(full)
         except Exception:
