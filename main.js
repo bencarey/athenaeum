@@ -315,6 +315,23 @@ async function convertPdf(srcPath, imagesDir) {
 // figures rasterized by the Python prep step. Reading-fidelity far exceeds the
 // heuristic extractor on design-heavy reports.
 const LLM_PDF_MODEL = 'claude-haiku-4-5';
+// [input, output] USD per 1M tokens, for the running cost meter
+const MODEL_PRICE = {
+  'claude-haiku-4-5': [1, 5], 'claude-haiku-4-5-20251001': [1, 5],
+  'claude-sonnet-4-6': [3, 15], 'claude-opus-4-8': [5, 25]
+};
+function recordLlmUsage(model, inTok, outTok) {
+  if (!inTok && !outTok) return;
+  const cfg = loadConfig();
+  const u = cfg.llmUsage || { inputTokens: 0, outputTokens: 0, cost: 0, calls: 0 };
+  const [pin, pout] = MODEL_PRICE[model] || [1, 5];
+  u.inputTokens += inTok || 0;
+  u.outputTokens += outTok || 0;
+  u.cost += (inTok || 0) / 1e6 * pin + (outTok || 0) / 1e6 * pout;
+  u.calls += 1;
+  cfg.llmUsage = u;
+  saveConfig(cfg);
+}
 const LLM_PDF_PROMPT = `You are transcribing one page of a PDF into clean, readable Markdown for a reading app. The real chart/figure images from this page are added separately, so your job is the TEXT. Rules:
 - Output ONLY Markdown for this page — no preamble, no commentary, no code fences.
 - Reproduce the page's text in natural reading order.
@@ -344,7 +361,8 @@ async function transcribePdfPage(key, pngPath) {
   });
   if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const json = await res.json();
-  return (json.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+  const text = (json.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+  return { text, usage: json.usage || {} };
 }
 
 // keep the first <h1> (document title); demote later page-level h1s to h2
@@ -367,6 +385,7 @@ async function convertPdfLlm(srcPath, imagesDir) {
   const n = prep.pageCount;
   const figs = prep.figures || {};
   const pageMd = new Array(n).fill('');
+  let inTok = 0, outTok = 0;
 
   // transcribe pages with bounded concurrency to keep import latency reasonable
   let next = 0;
@@ -376,11 +395,16 @@ async function convertPdfLlm(srcPath, imagesDir) {
       if (i >= n) break;
       const ref = prep.pageImages[i];
       if (!ref) continue;
-      try { pageMd[i] = await transcribePdfPage(key, path.join(outDir, ref)); }
-      catch (e) { console.error(`[athenaeum] page ${i + 1} transcription failed:`, e.message); }
+      try {
+        const r = await transcribePdfPage(key, path.join(outDir, ref));
+        pageMd[i] = r.text;
+        inTok += r.usage.input_tokens || 0;
+        outTok += r.usage.output_tokens || 0;
+      } catch (e) { console.error(`[athenaeum] page ${i + 1} transcription failed:`, e.message); }
     }
   };
   await Promise.all(Array.from({ length: Math.min(4, n) }, worker));
+  recordLlmUsage(LLM_PDF_MODEL, inTok, outTok);
 
   // assemble: page text + inlined figures (charts always; designed exhibits only
   // when the model did not already transcribe that exhibit as a table)
@@ -434,6 +458,7 @@ async function generateSummary(text) {
     });
     if (!res.ok) return null;
     const data = await res.json();
+    if (data.usage) recordLlmUsage('claude-haiku-4-5-20251001', data.usage.input_tokens, data.usage.output_tokens);
     const txt = (data.content && data.content[0] && data.content[0].text) || '';
     const m = txt.match(/\{[\s\S]*\}/);
     if (m) { try { return JSON.parse(m[0]); } catch {} }
@@ -587,7 +612,8 @@ ipcMain.handle('get-stats', () => {
       comments += (ann.imageAnnotations || []).length; // image notes are comments too
     } catch {}
   }
-  return { count, readMinutes, spentSeconds, highlights, comments };
+  const llm = loadConfig().llmUsage || {};
+  return { count, readMinutes, spentSeconds, highlights, comments, llmCost: llm.cost || 0 };
 });
 
 ipcMain.handle('read-article-html', (_, id) => {
