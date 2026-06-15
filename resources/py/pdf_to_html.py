@@ -361,6 +361,57 @@ def clean_raster_labels(page, fitz):
             pass
 
 
+def prep_llm(doc, out_dir, images_dir, fitz):
+    """Prep for the LLM-vision pipeline. Render each page to a full image (which a
+    vision model transcribes into clean text), and rasterize the chart/exhibit
+    figure regions so the real visuals can be inlined alongside that text. Each
+    figure is tagged 'chart' (a pure visual — line/bar chart, diagram) or
+    'exhibit' (a designed graphic, often a data matrix the model may instead
+    transcribe as a table). No text extraction, and the page images are the
+    untouched originals (no redaction)."""
+    page_count = doc.page_count
+    warnings = []
+    page_images = []
+    for pno in range(page_count):
+        name = f"page-{pno+1:03d}.png"
+        try:
+            doc[pno].get_pixmap(dpi=170).save(os.path.join(images_dir, name))
+            page_images.append(f"images/{name}")
+        except Exception as e:
+            page_images.append(None)
+            warnings.append(f"page {pno+1}: render failed ({str(e)[:50]})")
+
+    page_figs = {}
+    for pno in range(page_count):
+        page = doc[pno]
+        try:
+            found = page.find_tables().tables
+        except Exception:
+            found = []
+        exhibit_ids = {id(t) for t in found if is_graphic_table(t)}
+        real_table_rects = [fitz.Rect(t.bbox) for t in found if id(t) not in exhibit_ids]
+        exhibit_rects = [fitz.Rect(t.bbox) for t in found if id(t) in exhibit_ids]
+        charts = find_chart_rects(page, real_table_rects)
+        exhibit_bands = find_exhibit_rects(page, fitz)
+        in_band = lambda rc: any(_overlap_frac(rc, band) > 0.4 for band in exhibit_bands)
+        targets = [("exhibit", rc) for rc in exhibit_bands]
+        targets += [("chart", expand_with_labels(page, rc)) for rc in charts if not in_band(rc)]
+        targets += [("exhibit", (rc + (-10, -8, 10, 12)) & page.rect) for rc in exhibit_rects if not in_band(rc)]
+        figs = []
+        for i, (typ, rc) in enumerate(targets):
+            clip = (rc + (-4, -4, 4, 4)) & page.rect
+            try:
+                fn = f"fig-{pno+1:03d}-{i+1}.png"
+                page.get_pixmap(clip=clip, dpi=150).save(os.path.join(images_dir, fn))
+                figs.append({"img": f"images/{fn}", "type": typ})
+            except Exception as e:
+                warnings.append(f"page {pno+1}: raster failed ({str(e)[:50]})")
+        if figs:
+            page_figs[str(pno)] = figs
+    return {"mode": "llm-prep", "pageCount": page_count,
+            "pageImages": page_images, "figures": page_figs, "warnings": warnings}
+
+
 def main():
     if len(sys.argv) < 3:
         print(json.dumps({"error": "usage: pdf_to_html.py <src> <outDir>"})); sys.exit(1)
@@ -386,6 +437,12 @@ def main():
         cover = "cover.png"
     except Exception:
         pass
+
+    # LLM-vision prep mode: render page images + figure rasters, no text extraction
+    if "--prep-llm" in sys.argv:
+        res = prep_llm(doc, out_dir, images_dir, fitz)
+        res.update({"title": title, "cover": cover, "author": pdf_author})
+        return res
 
     # Is there a real text layer?
     text_len = sum(len(doc[i].get_text("text")) for i in range(page_count))

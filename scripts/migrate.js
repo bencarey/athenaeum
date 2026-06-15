@@ -76,7 +76,7 @@ function normalizeFragment(rawHtml) {
   });
   doc.querySelectorAll('blockquote, p').forEach((el) => {
     const t = el.textContent.trim();
-    if (/^\d{1,2}(["“'']|[A-Z])/.test(t) && (el.tagName === 'BLOCKQUOTE' || t.length < 400)) {
+    if (/^\d{1,2} ?(["“''’]|[A-Z])/.test(t) && (el.tagName === 'BLOCKQUOTE' || t.length < 400)) {
       el.classList.add('cite');
       const first = el.firstChild;
       if (first && first.nodeType === 3) {

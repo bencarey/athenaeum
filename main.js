@@ -131,7 +131,7 @@ function normalizeFragment(rawHtml) {
   // the leading number ("7Hannah" -> "7 Hannah")
   doc.querySelectorAll('blockquote, p').forEach((el) => {
     const t = el.textContent.trim();
-    if (/^\d{1,2}(["“'']|[A-Z])/.test(t) && (el.tagName === 'BLOCKQUOTE' || t.length < 400)) {
+    if (/^\d{1,2} ?(["“''’]|[A-Z])/.test(t) && (el.tagName === 'BLOCKQUOTE' || t.length < 400)) {
       el.classList.add('cite');
       const first = el.firstChild;
       if (first && first.nodeType === 3) {
@@ -266,16 +266,12 @@ function pdfScript() {
   return path.join(base, 'py', 'pdf_to_html.py');
 }
 
-async function convertPdf(srcPath, imagesDir) {
+function runPdfScript(srcPath, outDir, extraArgs, timeoutMs) {
   const py = pythonBin();
-  if (!fs.existsSync(py)) {
-    throw new Error('PDF support is not installed. Run `npm run setup` to build the Python environment.');
-  }
-  const outDir = path.dirname(imagesDir); // article folder; script writes into images/
-  const result = await new Promise((resolve, reject) => {
-    const child = spawn(py, [pdfScript(), srcPath, outDir], { stdio: ['ignore', 'pipe', 'pipe'] });
+  return new Promise((resolve, reject) => {
+    const child = spawn(py, [pdfScript(), srcPath, outDir, ...extraArgs], { stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '', err = '';
-    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('PDF conversion timed out')); }, 120000);
+    const timer = setTimeout(() => { child.kill('SIGKILL'); reject(new Error('PDF conversion timed out')); }, timeoutMs);
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
     child.on('error', reject);
@@ -285,6 +281,22 @@ async function convertPdf(srcPath, imagesDir) {
       try { resolve(JSON.parse(out)); } catch (e) { reject(new Error('Bad converter output: ' + e.message)); }
     });
   });
+}
+
+async function convertPdf(srcPath, imagesDir) {
+  const py = pythonBin();
+  if (!fs.existsSync(py)) {
+    throw new Error('PDF support is not installed. Run `npm run setup` to build the Python environment.');
+  }
+  // When an Anthropic key is configured, use the higher-fidelity LLM-vision
+  // pipeline; fall back to the heuristic extractor if it fails or has no key.
+  if (apiKey()) {
+    try { return await convertPdfLlm(srcPath, imagesDir); }
+    catch (e) { console.error('[athenaeum] LLM PDF conversion failed, using heuristic:', e.message); }
+  }
+
+  const outDir = path.dirname(imagesDir); // article folder; script writes into images/
+  const result = await runPdfScript(srcPath, outDir, [], 120000);
 
   if (result.mode === 'pages') {
     // scanned / text-empty PDF: page images already written to images/
@@ -295,6 +307,106 @@ async function convertPdf(srcPath, imagesDir) {
   const { marked } = await import('marked');
   const html = marked.parse(result.markdown || '', { mangle: false, headerIds: false });
   return { html, title: result.title || '', warnings: result.warnings || [], pages: result.pageCount, cover: result.cover || null, author: result.author || '' };
+}
+
+// ----- LLM-vision PDF conversion (hybrid) -----------------------------------
+// Render each page to an image, have Claude transcribe it into clean reading-order
+// Markdown (data exhibits -> tables, prose -> prose), and inline the real chart
+// figures rasterized by the Python prep step. Reading-fidelity far exceeds the
+// heuristic extractor on design-heavy reports.
+const LLM_PDF_MODEL = 'claude-haiku-4-5';
+const LLM_PDF_PROMPT = `You are transcribing one page of a PDF into clean, readable Markdown for a reading app. The real chart/figure images from this page are added separately, so your job is the TEXT. Rules:
+- Output ONLY Markdown for this page — no preamble, no commentary, no code fences.
+- Reproduce the page's text in natural reading order.
+- Use ## for section headings (reserve a single # for the document's main title on the very first page only). Body text as normal paragraphs. Lists as - or 1.. Block quotes with >.
+- Render genuine data tables, and any "Exhibit/Figure" that is fundamentally a data matrix or list, as a GitHub Markdown table or list. Keep the exhibit's title/caption as a heading above it.
+- For a purely visual chart, diagram, photo, or decorative graphic: do NOT describe it and do NOT emit a placeholder — omit it entirely. The actual image will be inlined separately.
+- Render footnote/citation definitions as plain paragraphs that begin with the number then a space then the source, e.g. "7 Hannah Mayer, "Superagency in the workplace," McKinsey, 2025." Keep inline citation markers as plain numbers.
+- Omit running headers, footers, page numbers, and standalone copyright / source-watermark lines that repeat across pages.
+- Do not invent or summarize — transcribe what is actually on the page. If the page has no real text (cover art, full-bleed graphic), output nothing.`;
+
+async function transcribePdfPage(key, pngPath) {
+  const data = fs.readFileSync(pngPath).toString('base64');
+  const res = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+    body: JSON.stringify({
+      model: LLM_PDF_MODEL,
+      max_tokens: 8000,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data } },
+          { type: 'text', text: LLM_PDF_PROMPT }
+        ]
+      }]
+    })
+  });
+  if (!res.ok) throw new Error(`Anthropic API ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const json = await res.json();
+  return (json.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('\n').trim();
+}
+
+// keep the first <h1> (document title); demote later page-level h1s to h2
+function relevelLlmHeadings(md) {
+  let seen = false;
+  return md.replace(/^(#{1,6})\s+(.*)$/gm, (m, hashes, text) => {
+    if (hashes !== '#') return m;
+    if (!seen) { seen = true; return m; }
+    return '## ' + text;
+  });
+}
+
+async function convertPdfLlm(srcPath, imagesDir) {
+  const key = apiKey();
+  if (!key) throw new Error('no API key');
+  const outDir = path.dirname(imagesDir);
+  const prep = await runPdfScript(srcPath, outDir, ['--prep-llm'], 180000);
+  if (prep.mode !== 'llm-prep') throw new Error('prep returned ' + prep.mode);
+
+  const n = prep.pageCount;
+  const figs = prep.figures || {};
+  const pageMd = new Array(n).fill('');
+
+  // transcribe pages with bounded concurrency to keep import latency reasonable
+  let next = 0;
+  const worker = async () => {
+    while (true) {
+      const i = next++;
+      if (i >= n) break;
+      const ref = prep.pageImages[i];
+      if (!ref) continue;
+      try { pageMd[i] = await transcribePdfPage(key, path.join(outDir, ref)); }
+      catch (e) { console.error(`[athenaeum] page ${i + 1} transcription failed:`, e.message); }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(4, n) }, worker));
+
+  // assemble: page text + inlined figures (charts always; designed exhibits only
+  // when the model did not already transcribe that exhibit as a table)
+  const parts = [];
+  for (let i = 0; i < n; i++) {
+    const md = pageMd[i] || '';
+    const pf = figs[String(i)] || [];
+    const hasTable = /(^|\n)\s*\|.*\|/.test(md);
+    const keep = pf.filter((f) => f.type === 'chart' || !hasTable);
+    const block = [md, keep.map((f) => `![](${f.img})`).join('\n\n')].filter(Boolean).join('\n\n');
+    if (block.trim()) parts.push(block);
+  }
+
+  // the full-page render images were only needed for transcription
+  try {
+    for (const f of fs.readdirSync(imagesDir)) {
+      if (/^page-\d+\.png$/.test(f)) fs.rmSync(path.join(imagesDir, f), { force: true });
+    }
+  } catch {}
+
+  if (!parts.length) throw new Error('no pages transcribed');
+  const markdown = relevelLlmHeadings(parts.join('\n\n'));
+  const title = (markdown.match(/^#\s+(.+)$/m) || [])[1] || prep.title || '';
+  const { marked } = await import('marked');
+  const html = marked.parse(markdown, { mangle: false, headerIds: false });
+  return { html, title: title.trim(), warnings: prep.warnings || [], pages: n, cover: prep.cover || null, author: prep.author || '' };
 }
 
 // ----- AI summary (Anthropic API, user-provided key) ------------------------
