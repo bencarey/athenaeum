@@ -218,6 +218,57 @@ async function convertHtml(srcPath, imagesDir) {
   return { html: bodyHtml, title, warnings: [] };
 }
 
+// Fetch a web page as text, with a browser-like UA so sites don't serve a
+// bot/blocked page. Rejects non-HTML responses (PDFs, images, etc.).
+async function fetchPage(url) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 30000);
+  let res;
+  try {
+    res = await fetch(url, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
+    });
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'The page took too long to load.' : 'Could not reach that URL.');
+  } finally { clearTimeout(to); }
+  if (!res.ok) throw new Error(`Could not fetch the page (HTTP ${res.status}).`);
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
+  if (ct && !/text\/html|application\/xhtml|text\/plain|\+xml/.test(ct)) {
+    throw new Error(`That link is not a web page (${ct.split(';')[0]}). Download it and use Add document instead.`);
+  }
+  return await res.text();
+}
+
+// Convert a live URL the same way an .html file is imported: Readability strips
+// nav/ads/boilerplate, then images are localized into the article folder.
+async function convertUrl(url, imagesDir) {
+  const rawPage = await fetchPage(url);
+  const { JSDOM } = require('jsdom');
+  const { Readability } = require('@mozilla/readability');
+  // Passing `url` lets Readability resolve relative <img>/<a> to absolute URLs.
+  const dom = new JSDOM(rawPage, { url });
+  const reader = new Readability(dom.window.document);
+  const parsed = reader.parse();
+  if (!parsed || !parsed.content || !parsed.content.trim()) {
+    throw new Error('Could not find readable article content on that page.');
+  }
+  const bodyHtml = await localizeImages(parsed.content, imagesDir, url);
+  return {
+    html: bodyHtml,
+    title: parsed.title || '',
+    author: (parsed.byline || '').trim(),
+    excerpt: (parsed.excerpt || '').trim(),
+    rawPage,
+    warnings: []
+  };
+}
+
 async function localizeImages(html, imagesDir, baseDir) {
   const { JSDOM } = require('jsdom');
   const dom = new JSDOM(`<body>${html}</body>`);
@@ -399,6 +450,74 @@ async function ingestFile(srcPath) {
   return meta;
 }
 
+// Ingest a web link. Mirrors ingestFile() but fetches/extracts from a URL and
+// records the source URL so "open original" can return to the live page.
+async function ingestUrl(rawUrl) {
+  ensureStore();
+  let url = (rawUrl || '').trim();
+  if (!/^https?:\/\//i.test(url)) {
+    if (/^[\w-]+(\.[\w-]+)+/.test(url)) url = 'https://' + url; // bare domain → https
+    else throw new Error('Enter a valid web address (http:// or https://).');
+  }
+  try { new URL(url); } catch { throw new Error('That does not look like a valid URL.'); }
+
+  let host = 'web-article';
+  try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
+  const id = uniqueId(host);
+  const folder = path.join(articlesDir(), id);
+  const imagesDir = path.join(folder, 'images');
+  fs.mkdirSync(imagesDir, { recursive: true });
+
+  let conv;
+  try {
+    conv = await convertUrl(url, imagesDir);
+    // preserve the original page exactly as fetched
+    fs.writeFileSync(path.join(folder, 'original.html'), conv.rawPage, 'utf-8');
+  } catch (e) {
+    fs.rmSync(folder, { recursive: true, force: true });
+    throw e;
+  }
+
+  const fragment = normalizeFragment(conv.html);
+  fs.writeFileSync(path.join(folder, 'article.html'), fragment, 'utf-8');
+
+  const title = (conv.title || firstHeading(fragment) || host).trim();
+  const words = countWords(fragment);
+  const imageCount = (fragment.match(/<img/gi) || []).length;
+
+  const plain = fragment.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const ai = await generateSummary(plain);
+
+  const meta = {
+    version: 1,
+    id,
+    title,
+    tags: parseTags(title),
+    sourceType: 'url',
+    originalFile: 'original.html',
+    sourceUrl: url,
+    cover: null,
+    author: (ai && ai.author) || conv.author || '',
+    summary: (ai && ai.summary) || conv.excerpt || null,
+    wordCount: words,
+    readMinutes: Math.max(1, Math.ceil(words / 225)),
+    imageCount,
+    pageCount: null,
+    rating: null,
+    ingestedAt: new Date().toISOString(),
+    timeSpentSeconds: 0,
+    lastReadAt: null,
+    conversion: { tool: 'url', ok: true, warnings: conv.warnings || [] }
+  };
+  fs.writeFileSync(path.join(folder, 'meta.json'), JSON.stringify(meta, null, 2), 'utf-8');
+  fs.writeFileSync(
+    path.join(folder, 'annotations.json'),
+    JSON.stringify({ version: 1, articleId: id, textAnnotations: [], imageAnnotations: [] }, null, 2),
+    'utf-8'
+  );
+  return meta;
+}
+
 function listArticles() {
   ensureStore();
   const dir = articlesDir();
@@ -439,6 +558,11 @@ ipcMain.handle('pick-and-ingest', async (event) => {
     catch (e) { errors.push({ file: path.basename(fp), message: e.message }); }
   }
   return { added, errors };
+});
+
+ipcMain.handle('ingest-url', async (_, url) => {
+  try { return { added: [await ingestUrl(url)], errors: [] }; }
+  catch (e) { return { added: [], errors: [{ file: url, message: e.message }] }; }
 });
 
 ipcMain.handle('list-articles', () => listArticles());
@@ -532,6 +656,8 @@ ipcMain.handle('write-quotes', (_, data) => {
 ipcMain.handle('open-original', (_, id) => {
   try {
     const meta = JSON.parse(fs.readFileSync(path.join(articlesDir(), id, 'meta.json'), 'utf-8'));
+    // web links reopen the live page; files open the preserved original
+    if (meta.sourceType === 'url' && meta.sourceUrl) { shell.openExternal(meta.sourceUrl); return; }
     shell.openPath(path.join(articlesDir(), id, meta.originalFile));
   } catch {}
 });
@@ -582,6 +708,7 @@ function buildMenu(win) {
       label: 'File',
       submenu: [
         { label: 'Add Document…', accelerator: 'CmdOrCtrl+O', click: () => win.webContents.send('menu', 'add') },
+        { label: 'Add Link…', accelerator: 'CmdOrCtrl+L', click: () => win.webContents.send('menu', 'addurl') },
         { label: 'Change Library Folder…', click: () => win.webContents.send('menu', 'library') },
         { type: 'separator' },
         { role: 'close' }

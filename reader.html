@@ -73,6 +73,7 @@
 
   .btn { height: 32px; padding: 0 16px; border: none; background: var(--ink-max); color: var(--on-ink); font-size: 10px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; cursor: pointer; border-radius: 999px; transition: opacity 120ms; }
   .btn:hover { opacity: 0.82; }
+  .btn--alt { background: var(--ink-3); color: var(--on-ink); }
   .btn--outline { background: transparent; color: var(--ink-2); border: 1px solid var(--line-strong); }
   .btn--outline:hover { color: var(--ink); border-color: var(--ink); opacity: 1; }
   .btn--ghost { background: none; border: none; color: var(--ink-3); padding: 0; height: auto; letter-spacing: 0.1em; }
@@ -334,7 +335,10 @@
         <div class="view-title">Library</div>
         <div class="view-summary" id="libSummary"></div>
       </div>
-      <button class="btn" id="addBtn">＋ Add document</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn--alt" id="addLinkBtn">＋ Add link</button>
+        <button class="btn" id="addBtn">＋ Add document</button>
+      </div>
     </div>
     <div class="stats-grid" id="libStats"></div>
     <div class="tag-bar" id="libTagBar"></div>
@@ -422,12 +426,23 @@
     </div>
   </div>
 </div>
+<div class="kbd-overlay" id="urlOverlay">
+  <div class="kbd-card" style="width:480px">
+    <h3>Add from a link</h3>
+    <p style="font-size:13px;color:var(--ink-3);margin-bottom:14px;line-height:1.5">Paste a URL. Athenaeum fetches the page and keeps the core article — ads, navigation, and clutter are stripped out.</p>
+    <input id="urlInput" type="url" placeholder="https://…" autocomplete="off" spellcheck="false" style="width:100%;height:36px;border:1px solid var(--line);border-radius:8px;padding:0 10px;font:inherit;font-size:13px;background:var(--surface-2);color:var(--ink);outline:none">
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn--outline" id="urlCancel">Cancel</button>
+      <button class="btn" id="urlSave">Import</button>
+    </div>
+  </div>
+</div>
 
 <script>
 // `api` is injected as a global by preload.js (contextBridge). Use it directly.
 const $ = (s, r = document) => r.querySelector(s);
 const TAG_RE = /#([a-zA-Z][a-zA-Z0-9_-]*)/g;
-const SRC_GLYPH = { pdf: 'PDF', docx: 'DOC', html: 'WEB' };
+const SRC_GLYPH = { pdf: 'PDF', docx: 'DOC', html: 'WEB', url: 'LINK' };
 
 // ---------- prefs / theme ----------
 function loadPrefs() { try { return JSON.parse(localStorage.getItem('athenaeum.prefs.v1') || '{}'); } catch { return {}; } }
@@ -539,8 +554,11 @@ function renderLibrary() {
   if (!articles.length) {
     list.innerHTML = `<div class="empty">
       ${BOOK_SVG}
-      <p>Nothing in the library yet.<br>Add a PDF, Word, or HTML document to begin.</p>
-      <button class="btn" onclick="addDocuments()">＋ Add document</button></div>`;
+      <p>Nothing in the library yet.<br>Paste a link or add a PDF, Word, or HTML document to begin.</p>
+      <div style="display:flex;gap:8px;justify-content:center">
+        <button class="btn btn--alt" onclick="promptUrl()">＋ Add link</button>
+        <button class="btn" onclick="addDocuments()">＋ Add document</button>
+      </div></div>`;
     return;
   }
   list.innerHTML = '';
@@ -584,6 +602,31 @@ async function addDocuments() {
   await loadLibrary();
 }
 window.addDocuments = addDocuments;
+
+function promptUrl() {
+  $('#urlOverlay').classList.add('show');
+  const inp = $('#urlInput'); inp.value = ''; setTimeout(() => inp.focus(), 30);
+}
+window.promptUrl = promptUrl;
+
+async function importUrl() {
+  const url = $('#urlInput').value.trim();
+  if (!url) return;
+  $('#urlOverlay').classList.remove('show');
+  setSave('dirty');
+  toast('Fetching link…');
+  const res = await api.ingestUrl(url);
+  setSave('idle');
+  if (res.errors && res.errors.length) res.errors.forEach(e => toast(e.message));
+  if (res.added && res.added.length) toast('Added “' + (titleWithoutTags(res.added[0].title) || 'article') + '”');
+  await loadLibrary();
+}
+
+$('#addLinkBtn').onclick = promptUrl;
+$('#urlCancel').onclick = () => $('#urlOverlay').classList.remove('show');
+$('#urlSave').onclick = importUrl;
+$('#urlOverlay').onclick = (e) => { if (e.target.id === 'urlOverlay') $('#urlOverlay').classList.remove('show'); };
+$('#urlInput').onkeydown = (e) => { if (e.key === 'Enter') importUrl(); else if (e.key === 'Escape') $('#urlOverlay').classList.remove('show'); };
 
 async function refreshLibPill(cfg) {
   cfg = cfg || await api.getConfig();
@@ -1376,7 +1419,7 @@ const BOOK_SVG = `<svg class="mark" width="60" height="60" viewBox="0 0 60 60" f
   <path d="M30 16C24 11 16 11 11 13v33c5-2 13-2 19 3 6-5 14-5 19-3V13c-5-2-13-2-19 3z"/>
   <path d="M30 16v33"/></svg>`;
 
-api.onMenu(action => { if (action === 'add') addDocuments(); else if (action === 'library') $('#libPill').click(); });
+api.onMenu(action => { if (action === 'add') addDocuments(); else if (action === 'addurl') promptUrl(); else if (action === 'library') $('#libPill').click(); });
 
 (async function boot() {
   await refreshLibPill();
