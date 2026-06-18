@@ -735,6 +735,20 @@ function createWindow() {
   });
   ensureStore();
   buildMenu(win);
+
+  // Links inside articles must never hijack the app window (which would strand
+  // the reader with no way back). Keep file:// (the app shell) in-window and
+  // send every web link to the user's default browser instead.
+  win.webContents.on('will-navigate', (e, url) => {
+    if (url.startsWith('file://')) return; // the app shell itself
+    e.preventDefault();
+    shell.openExternal(url); // http/https/mailto — sanitizer already blocks the rest
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
   win.loadFile(path.join(__dirname, 'reader.html'));
 }
 
