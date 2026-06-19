@@ -218,6 +218,129 @@ async function convertHtml(srcPath, imagesDir) {
   return { html: bodyHtml, title, warnings: [] };
 }
 
+const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
+// Fetch a web page as text, with a browser-like UA so sites don't serve a
+// bot/blocked page. Rejects non-HTML responses (PDFs, images, etc.).
+async function fetchPage(url) {
+  const ctrl = new AbortController();
+  const to = setTimeout(() => ctrl.abort(), 30000);
+  let res;
+  try {
+    res = await fetch(url, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent': BROWSER_UA,
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9'
+      }
+    });
+  } catch (e) {
+    throw new Error(e.name === 'AbortError' ? 'The page took too long to load.' : 'Could not reach that URL.');
+  } finally { clearTimeout(to); }
+  if (!res.ok) throw new Error(`Could not fetch the page (HTTP ${res.status}).`);
+  const ct = (res.headers.get('content-type') || '').toLowerCase();
+  if (ct && !/text\/html|application\/xhtml|text\/plain|\+xml/.test(ct)) {
+    throw new Error(`That link is not a web page (${ct.split(';')[0]}). Download it and use Add document instead.`);
+  }
+  return await res.text();
+}
+
+// Convert a live URL the same way an .html file is imported: Readability strips
+// nav/ads/boilerplate, then images are localized into the article folder.
+async function convertUrl(url, imagesDir) {
+  const rawPage = await fetchPage(url);
+  const { JSDOM } = require('jsdom');
+  const { Readability } = require('@mozilla/readability');
+  // Passing `url` lets Readability resolve relative <img>/<a> to absolute URLs.
+  const dom = new JSDOM(rawPage, { url });
+  const doc = dom.window.document;
+  // Read the site's name + logo BEFORE Readability runs — it mutates the
+  // document and strips the <head> links we need.
+  const site = siteMeta(doc, url);
+  const parsed = new Readability(doc).parse();
+  if (!parsed || !parsed.content || !parsed.content.trim()) {
+    throw new Error('Could not find readable article content on that page.');
+  }
+  const bodyHtml = await localizeImages(parsed.content, imagesDir, url);
+  return {
+    html: bodyHtml,
+    title: parsed.title || '',
+    author: (parsed.byline || '').trim(),
+    excerpt: (parsed.excerpt || '').trim(),
+    siteName: site.siteName,
+    logoCandidates: site.logoCandidates,
+    rawPage,
+    warnings: []
+  };
+}
+
+// A link's declared icon size ("180x180" -> 18), used to prefer larger logos.
+function iconSize(linkEl) {
+  const m = (linkEl.getAttribute('sizes') || '').match(/(\d+)x\d+/i);
+  return m ? Math.min(parseInt(m[1], 10), 512) / 10 : 0;
+}
+
+// Pull the publishing site's display name and an ordered list of logo URLs
+// (best first), falling back to the domain favicon and Google's favicon service
+// so there is almost always something to show.
+function siteMeta(doc, pageUrl) {
+  const abs = (href) => { try { return new URL(href, pageUrl).href; } catch { return null; } };
+
+  let siteName = '';
+  const og = doc.querySelector('meta[property="og:site_name"]');
+  if (og && og.getAttribute('content')) siteName = og.getAttribute('content').trim();
+  let host = '';
+  try { host = new URL(pageUrl).hostname.replace(/^www\./, ''); } catch {}
+  if (!siteName) siteName = host;
+
+  const cands = [];
+  const add = (href, score) => { const u = href && abs(href); if (u) cands.push({ u, score }); };
+  // apple-touch-icon is usually a clean, square brand logo
+  doc.querySelectorAll('link[rel~="apple-touch-icon"], link[rel~="apple-touch-icon-precomposed"]')
+    .forEach((l) => add(l.getAttribute('href'), 100 + iconSize(l)));
+  // declared favicons (prefer larger / svg)
+  doc.querySelectorAll('link[rel~="icon"], link[rel="shortcut icon"], link[rel~="mask-icon"]')
+    .forEach((l) => {
+      const href = l.getAttribute('href') || '';
+      const isSvg = /\.svg(\?|#|$)/i.test(href) || (l.getAttribute('type') || '').includes('svg');
+      add(href, 50 + iconSize(l) + (isSvg ? 15 : 0));
+    });
+
+  cands.sort((a, b) => b.score - a.score);
+  const ordered = cands.map((c) => c.u);
+  try {
+    const origin = new URL(pageUrl).origin;
+    ordered.push(origin + '/favicon.ico');
+    if (host) ordered.push('https://www.google.com/s2/favicons?domain=' + host + '&sz=128');
+  } catch {}
+  return { siteName, logoCandidates: [...new Set(ordered)] };
+}
+
+// Download a candidate logo into the article's images/ folder. Returns the
+// relative path on success, or null so the caller can try the next candidate.
+async function saveLogo(url, imagesDir) {
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 12000);
+    const res = await fetch(url, { signal: ctrl.signal, redirect: 'follow', headers: { 'User-Agent': BROWSER_UA } }).catch(() => null);
+    clearTimeout(to);
+    if (!res || !res.ok) return null;
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (!/image\//.test(ct)) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!buf.length || buf.length > 2_000_000) return null;
+    let ext = (ct.split('/')[1] || 'png').split('+')[0].replace(/[^a-z0-9]/gi, '') || 'png';
+    if (ext === 'jpeg') ext = 'jpg';
+    if (ext === 'xicon' || ext === 'vndmicrosofticon') ext = 'ico';
+    if (ext === 'svgxml') ext = 'svg';
+    const name = 'site-logo.' + ext;
+    fs.writeFileSync(path.join(imagesDir, name), buf);
+    return 'images/' + name;
+  } catch { return null; }
+}
+
 async function localizeImages(html, imagesDir, baseDir) {
   const { JSDOM } = require('jsdom');
   const dom = new JSDOM(`<body>${html}</body>`);
@@ -538,6 +661,83 @@ async function ingestFile(srcPath) {
   return meta;
 }
 
+// Ingest a web link. Mirrors ingestFile() but fetches/extracts from a URL and
+// records the source URL so "open original" can return to the live page.
+async function ingestUrl(rawUrl) {
+  ensureStore();
+  let url = (rawUrl || '').trim();
+  if (!/^https?:\/\//i.test(url)) {
+    if (/^[\w-]+(\.[\w-]+)+/.test(url)) url = 'https://' + url; // bare domain → https
+    else throw new Error('Enter a valid web address (http:// or https://).');
+  }
+  try { new URL(url); } catch { throw new Error('That does not look like a valid URL.'); }
+
+  let host = 'web-article';
+  try { host = new URL(url).hostname.replace(/^www\./, ''); } catch {}
+  const id = uniqueId(host);
+  const folder = path.join(articlesDir(), id);
+  const imagesDir = path.join(folder, 'images');
+  fs.mkdirSync(imagesDir, { recursive: true });
+
+  let conv;
+  try {
+    conv = await convertUrl(url, imagesDir);
+    // preserve the original page exactly as fetched
+    fs.writeFileSync(path.join(folder, 'original.html'), conv.rawPage, 'utf-8');
+  } catch (e) {
+    fs.rmSync(folder, { recursive: true, force: true });
+    throw e;
+  }
+
+  // grab the publishing site's logo (best candidate that actually downloads)
+  let siteLogo = null;
+  for (const cand of conv.logoCandidates || []) {
+    siteLogo = await saveLogo(cand, imagesDir);
+    if (siteLogo) break;
+  }
+
+  const fragment = normalizeFragment(conv.html);
+  fs.writeFileSync(path.join(folder, 'article.html'), fragment, 'utf-8');
+
+  const title = (conv.title || firstHeading(fragment) || host).trim();
+  const words = countWords(fragment);
+  const imageCount = (fragment.match(/<img/gi) || []).length;
+
+  const plain = fragment.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+  const ai = await generateSummary(plain);
+
+  const meta = {
+    version: 1,
+    id,
+    title,
+    tags: parseTags(title),
+    sourceType: 'url',
+    originalFile: 'original.html',
+    sourceUrl: url,
+    siteName: conv.siteName || host,
+    siteLogo,
+    cover: null,
+    author: (ai && ai.author) || conv.author || '',
+    summary: (ai && ai.summary) || conv.excerpt || null,
+    wordCount: words,
+    readMinutes: Math.max(1, Math.ceil(words / 225)),
+    imageCount,
+    pageCount: null,
+    rating: null,
+    ingestedAt: new Date().toISOString(),
+    timeSpentSeconds: 0,
+    lastReadAt: null,
+    conversion: { tool: 'url', ok: true, warnings: conv.warnings || [] }
+  };
+  fs.writeFileSync(path.join(folder, 'meta.json'), JSON.stringify(meta, null, 2), 'utf-8');
+  fs.writeFileSync(
+    path.join(folder, 'annotations.json'),
+    JSON.stringify({ version: 1, articleId: id, textAnnotations: [], imageAnnotations: [] }, null, 2),
+    'utf-8'
+  );
+  return meta;
+}
+
 function listArticles() {
   ensureStore();
   const dir = articlesDir();
@@ -590,6 +790,11 @@ ipcMain.handle('pick-and-ingest', async (event) => {
 
 // drag-and-drop: the renderer resolves dropped File objects to absolute paths
 ipcMain.handle('ingest-paths', (_, paths) => ingestPaths(Array.isArray(paths) ? paths : []));
+
+ipcMain.handle('ingest-url', async (_, url) => {
+  try { return { added: [await ingestUrl(url)], errors: [] }; }
+  catch (e) { return { added: [], errors: [{ file: url, message: e.message }] }; }
+});
 
 ipcMain.handle('list-articles', () => listArticles());
 
@@ -683,6 +888,8 @@ ipcMain.handle('write-quotes', (_, data) => {
 ipcMain.handle('open-original', (_, id) => {
   try {
     const meta = JSON.parse(fs.readFileSync(path.join(articlesDir(), id, 'meta.json'), 'utf-8'));
+    // web links reopen the live page; files open the preserved original
+    if (meta.sourceType === 'url' && meta.sourceUrl) { shell.openExternal(meta.sourceUrl); return; }
     shell.openPath(path.join(articlesDir(), id, meta.originalFile));
   } catch {}
 });
@@ -733,6 +940,7 @@ function buildMenu(win) {
       label: 'File',
       submenu: [
         { label: 'Add Document…', accelerator: 'CmdOrCtrl+O', click: () => win.webContents.send('menu', 'add') },
+        { label: 'Add Link…', accelerator: 'CmdOrCtrl+L', click: () => win.webContents.send('menu', 'addurl') },
         { label: 'Change Library Folder…', click: () => win.webContents.send('menu', 'library') },
         { type: 'separator' },
         { role: 'close' }
@@ -759,6 +967,20 @@ function createWindow() {
   });
   ensureStore();
   buildMenu(win);
+
+  // Links inside articles must never hijack the app window (which would strand
+  // the reader with no way back). Keep file:// (the app shell) in-window and
+  // send every web link to the user's default browser instead.
+  win.webContents.on('will-navigate', (e, url) => {
+    if (url.startsWith('file://')) return; // the app shell itself
+    e.preventDefault();
+    shell.openExternal(url); // http/https/mailto — sanitizer already blocks the rest
+  });
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
   win.loadFile(path.join(__dirname, 'reader.html'));
 }
 

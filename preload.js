@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('api', {
   pickAndIngest:      ()            => ipcRenderer.invoke('pick-and-ingest'),
   ingestPaths:        (paths)       => ipcRenderer.invoke('ingest-paths', paths),
   pathForFile:        (file)        => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
+  ingestUrl:          (url)         => ipcRenderer.invoke('ingest-url', url),
   listArticles:       ()            => ipcRenderer.invoke('list-articles'),
   getStats:           ()            => ipcRenderer.invoke('get-stats'),
   readArticleHtml:    (id)          => ipcRenderer.invoke('read-article-html', id),
