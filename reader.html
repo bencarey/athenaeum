@@ -156,6 +156,11 @@
   .opener-date { font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--ink-4); margin-top: 6px; font-variant-numeric: tabular-nums; }
   .opener-summary { margin-top: 15px; font-size: 14.5px; line-height: 1.58; color: var(--ink-2); }
   .opener-summary.muted { color: var(--ink-4); }
+  .opener-source { display: flex; align-items: center; gap: 8px; margin-top: 12px; }
+  .opener-source.hidden { display: none; }
+  .opener-source img { width: 20px; height: 20px; border-radius: 4px; object-fit: contain; flex-shrink: 0; background: var(--surface-2); }
+  .opener-source a { font-size: 12px; color: var(--ink-3); text-decoration: none; letter-spacing: 0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .opener-source a:hover { color: var(--ink); text-decoration: underline; }
   .opener-summary .btn--ghost { font-size: 11px; }
   .opener-summary .loading { font-style: italic; }
 
@@ -180,6 +185,14 @@
   /* wide mode: widen the whole page (top bar + nav + reader) to ~94% of the window */
   body.wide-page .frame { max-width: 94vw; }
   body.wide-page .frame { transition: max-width 160ms ease; }
+
+  /* ...and let the reading column actually fill that width, rather than the
+     extra space just becoming empty side margins around a 720px measure. */
+  body.wide-page .reader-grid { grid-template-columns: 236px minmax(0,1fr) 268px; }
+  body.wide-page #view-reader.no-toc .reader-grid { grid-template-columns: minmax(0,1fr) 268px; }
+  body.wide-page #view-reader.no-rail .reader-grid { grid-template-columns: 236px minmax(0,1fr); }
+  body.wide-page #view-reader.no-toc.no-rail .reader-grid { grid-template-columns: minmax(0,1fr); }
+  body.wide-page .prose { max-width: none; }
 
   /* table of contents sidebar */
   .toc { position: sticky; top: 16px; max-height: calc(100vh - 56px); overflow-y: auto; padding-right: 2px; }
@@ -371,6 +384,7 @@
       <div class="opener-meta">
         <div class="opener-author" id="openerAuthor"></div>
         <div class="opener-date" id="openerDate"></div>
+        <div class="opener-source hidden" id="openerSource"></div>
         <div class="opener-summary" id="openerSummary"></div>
       </div>
     </div>
@@ -772,6 +786,31 @@ function renderOpener() {
   $('#openerAuthor').textContent = m.author || titleWithoutTags(m.title) || 'Document';
   $('#openerDate').textContent = 'Added ' + fmtDate(m.ingestedAt) + ' · ' + (SRC_GLYPH[m.sourceType] || 'DOC') +
     (m.pageCount ? ' · ' + m.pageCount + ' pages' : '');
+
+  // source line: site logo + clickable link back to where the article lives
+  const srcEl = $('#openerSource');
+  srcEl.innerHTML = '';
+  if (m.sourceUrl) {
+    let host = m.sourceUrl;
+    try { host = new URL(m.sourceUrl).hostname.replace(/^www\./, ''); } catch {}
+    if (m.siteLogo) {
+      const img = document.createElement('img');
+      img.src = (currentReader.baseUrl || '') + m.siteLogo;
+      img.alt = m.siteName || host;
+      img.onerror = () => img.remove();
+      srcEl.appendChild(img);
+    }
+    const a = document.createElement('a');
+    a.href = m.sourceUrl;
+    a.title = m.sourceUrl;
+    a.textContent = m.siteName || host;
+    a.onclick = (e) => { e.preventDefault(); api.openExternal(m.sourceUrl); };
+    srcEl.appendChild(a);
+    srcEl.classList.remove('hidden');
+  } else {
+    srcEl.classList.add('hidden');
+  }
+
   const sumEl = $('#openerSummary');
   if (m.summary) { sumEl.classList.remove('muted'); sumEl.textContent = m.summary; }
   else renderSummaryPlaceholder(sumEl);

@@ -218,6 +218,8 @@ async function convertHtml(srcPath, imagesDir) {
   return { html: bodyHtml, title, warnings: [] };
 }
 
+const BROWSER_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36';
+
 // Fetch a web page as text, with a browser-like UA so sites don't serve a
 // bot/blocked page. Rejects non-HTML responses (PDFs, images, etc.).
 async function fetchPage(url) {
@@ -229,7 +231,7 @@ async function fetchPage(url) {
       signal: ctrl.signal,
       redirect: 'follow',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'User-Agent': BROWSER_UA,
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9'
       }
@@ -253,8 +255,11 @@ async function convertUrl(url, imagesDir) {
   const { Readability } = require('@mozilla/readability');
   // Passing `url` lets Readability resolve relative <img>/<a> to absolute URLs.
   const dom = new JSDOM(rawPage, { url });
-  const reader = new Readability(dom.window.document);
-  const parsed = reader.parse();
+  const doc = dom.window.document;
+  // Read the site's name + logo BEFORE Readability runs — it mutates the
+  // document and strips the <head> links we need.
+  const site = siteMeta(doc, url);
+  const parsed = new Readability(doc).parse();
   if (!parsed || !parsed.content || !parsed.content.trim()) {
     throw new Error('Could not find readable article content on that page.');
   }
@@ -264,9 +269,76 @@ async function convertUrl(url, imagesDir) {
     title: parsed.title || '',
     author: (parsed.byline || '').trim(),
     excerpt: (parsed.excerpt || '').trim(),
+    siteName: site.siteName,
+    logoCandidates: site.logoCandidates,
     rawPage,
     warnings: []
   };
+}
+
+// A link's declared icon size ("180x180" -> 18), used to prefer larger logos.
+function iconSize(linkEl) {
+  const m = (linkEl.getAttribute('sizes') || '').match(/(\d+)x\d+/i);
+  return m ? Math.min(parseInt(m[1], 10), 512) / 10 : 0;
+}
+
+// Pull the publishing site's display name and an ordered list of logo URLs
+// (best first), falling back to the domain favicon and Google's favicon service
+// so there is almost always something to show.
+function siteMeta(doc, pageUrl) {
+  const abs = (href) => { try { return new URL(href, pageUrl).href; } catch { return null; } };
+
+  let siteName = '';
+  const og = doc.querySelector('meta[property="og:site_name"]');
+  if (og && og.getAttribute('content')) siteName = og.getAttribute('content').trim();
+  let host = '';
+  try { host = new URL(pageUrl).hostname.replace(/^www\./, ''); } catch {}
+  if (!siteName) siteName = host;
+
+  const cands = [];
+  const add = (href, score) => { const u = href && abs(href); if (u) cands.push({ u, score }); };
+  // apple-touch-icon is usually a clean, square brand logo
+  doc.querySelectorAll('link[rel~="apple-touch-icon"], link[rel~="apple-touch-icon-precomposed"]')
+    .forEach((l) => add(l.getAttribute('href'), 100 + iconSize(l)));
+  // declared favicons (prefer larger / svg)
+  doc.querySelectorAll('link[rel~="icon"], link[rel="shortcut icon"], link[rel~="mask-icon"]')
+    .forEach((l) => {
+      const href = l.getAttribute('href') || '';
+      const isSvg = /\.svg(\?|#|$)/i.test(href) || (l.getAttribute('type') || '').includes('svg');
+      add(href, 50 + iconSize(l) + (isSvg ? 15 : 0));
+    });
+
+  cands.sort((a, b) => b.score - a.score);
+  const ordered = cands.map((c) => c.u);
+  try {
+    const origin = new URL(pageUrl).origin;
+    ordered.push(origin + '/favicon.ico');
+    if (host) ordered.push('https://www.google.com/s2/favicons?domain=' + host + '&sz=128');
+  } catch {}
+  return { siteName, logoCandidates: [...new Set(ordered)] };
+}
+
+// Download a candidate logo into the article's images/ folder. Returns the
+// relative path on success, or null so the caller can try the next candidate.
+async function saveLogo(url, imagesDir) {
+  try {
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 12000);
+    const res = await fetch(url, { signal: ctrl.signal, redirect: 'follow', headers: { 'User-Agent': BROWSER_UA } }).catch(() => null);
+    clearTimeout(to);
+    if (!res || !res.ok) return null;
+    const ct = (res.headers.get('content-type') || '').toLowerCase();
+    if (!/image\//.test(ct)) return null;
+    const buf = Buffer.from(await res.arrayBuffer());
+    if (!buf.length || buf.length > 2_000_000) return null;
+    let ext = (ct.split('/')[1] || 'png').split('+')[0].replace(/[^a-z0-9]/gi, '') || 'png';
+    if (ext === 'jpeg') ext = 'jpg';
+    if (ext === 'xicon' || ext === 'vndmicrosofticon') ext = 'ico';
+    if (ext === 'svgxml') ext = 'svg';
+    const name = 'site-logo.' + ext;
+    fs.writeFileSync(path.join(imagesDir, name), buf);
+    return 'images/' + name;
+  } catch { return null; }
 }
 
 async function localizeImages(html, imagesDir, baseDir) {
@@ -478,6 +550,13 @@ async function ingestUrl(rawUrl) {
     throw e;
   }
 
+  // grab the publishing site's logo (best candidate that actually downloads)
+  let siteLogo = null;
+  for (const cand of conv.logoCandidates || []) {
+    siteLogo = await saveLogo(cand, imagesDir);
+    if (siteLogo) break;
+  }
+
   const fragment = normalizeFragment(conv.html);
   fs.writeFileSync(path.join(folder, 'article.html'), fragment, 'utf-8');
 
@@ -496,6 +575,8 @@ async function ingestUrl(rawUrl) {
     sourceType: 'url',
     originalFile: 'original.html',
     sourceUrl: url,
+    siteName: conv.siteName || host,
+    siteLogo,
     cover: null,
     author: (ai && ai.author) || conv.author || '',
     summary: (ai && ai.summary) || conv.excerpt || null,
