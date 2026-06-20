@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld('api', {
   pathForFile:        (file)        => { try { return webUtils.getPathForFile(file); } catch { return ''; } },
   ingestUrl:          (url)         => ipcRenderer.invoke('ingest-url', url),
   listArticles:       ()            => ipcRenderer.invoke('list-articles'),
+  searchArticles:     (q)           => ipcRenderer.invoke('search-articles', q),
   getStats:           ()            => ipcRenderer.invoke('get-stats'),
   readArticleHtml:    (id)          => ipcRenderer.invoke('read-article-html', id),
   articleBase:        (id)          => ipcRenderer.invoke('article-base', id),

@@ -122,6 +122,21 @@
   .lib-meta .read-toggle.on { color: var(--ink-2); font-weight: 600; }
   .lib-row.read { opacity: 0.6; transition: opacity 120ms; }
   .lib-row.read:hover { opacity: 1; }
+
+  /* search */
+  .lib-search { width: 100%; box-sizing: border-box; margin: 0 0 22px; padding: 11px 16px; font: inherit; font-size: 14px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; outline: none; transition: border-color 120ms; -webkit-appearance: none; }
+  .lib-search::placeholder { color: var(--ink-4); }
+  .lib-search:focus { border-color: var(--line-strong); }
+  .sr-row { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: start; padding: 15px 6px; border-bottom: 1px solid var(--line); cursor: pointer; transition: padding 120ms, background 120ms; }
+  .sr-row:hover { background: var(--surface); padding-left: 12px; }
+  .sr-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); margin-bottom: 5px; }
+  .sr-snip { font-size: 13px; line-height: 1.5; color: var(--ink-3); }
+  .sr-snip .qmark, .sr-title .qmark { background: var(--hl, #FFE45C); color: #1a1708; border-radius: 2px; padding: 0 1px; }
+  .sr-counts { font-size: 11px; color: var(--ink-4); margin-top: 6px; letter-spacing: 0.03em; }
+  .sr-badge { display: inline-block; font-size: 9px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; padding: 2px 7px; border-radius: 999px; vertical-align: middle; white-space: nowrap; }
+  .sr-badge.comment { background: var(--ink); color: var(--on-ink, #fff); }
+  .sr-badge.highlight { background: var(--hl, #FFE45C); color: #1a1708; }
+  .sr-badge.title, .sr-badge.content { background: var(--surface-2); color: var(--ink-3); border: 1px solid var(--line); }
   .empty { padding: 60px 0; text-align: center; color: var(--ink-3); }
   .empty .mark { margin: 0 auto 22px; display: block; }
   .empty p { font-size: 14px; margin-bottom: 22px; color: var(--ink-3); }
@@ -375,6 +390,8 @@
         <button class="btn" id="addBtn">＋ Add document</button>
       </div>
     </div>
+    <input id="libSearch" class="lib-search" type="search" autocomplete="off" spellcheck="false"
+           placeholder="Search articles, highlights, and comments…">
     <div class="stats-grid" id="libStats"></div>
     <div class="tag-bar" id="libTagBar"></div>
     <ul class="lib-list" id="libList"></ul>
@@ -635,6 +652,61 @@ function renderLibrary() {
 $('#addBtn').onclick = addDocuments;
 $('#libPill').onclick = async () => { const c = await api.setLibraryPath(); refreshLibPill(c); loadLibrary(); };
 
+// ---- library search (annotations ranked above article content) ----
+let searchT = null;
+$('#libSearch').addEventListener('input', (e) => {
+  const q = e.target.value;
+  clearTimeout(searchT);
+  searchT = setTimeout(() => runSearch(q), 130);
+});
+$('#libSearch').addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { e.target.value = ''; runSearch(''); $('#libSearch').blur(); }
+});
+
+async function runSearch(q) {
+  q = (q || '').trim();
+  const on = q.length >= 2;
+  $('#libStats').style.display = on ? 'none' : '';
+  $('#libTagBar').style.display = on ? 'none' : '';
+  $('#libGreeting').style.display = (on || !articles.length) ? 'none' : '';
+  if (!on) { renderLibrary(); return; }
+  const res = await api.searchArticles(q);
+  if ($('#libSearch').value.trim() !== q) return; // a newer keystroke won
+  renderSearchResults(res, q);
+}
+
+function highlightQ(text, q) {
+  const eq = esc(q).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return esc(text).replace(new RegExp('(' + eq + ')', 'ig'), '<span class="qmark">$1</span>');
+}
+
+const SR_BADGE = { comment: 'Comment', highlight: 'Highlight', title: 'Title', content: 'Article' };
+function renderSearchResults(res, q) {
+  const list = $('#libList');
+  $('#libSummary').textContent = res.length
+    ? `${res.length} result${res.length === 1 ? '' : 's'} for “${q}”`
+    : `No matches for “${q}”`;
+  if (!res.length) { list.innerHTML = `<div class="empty">${BOOK_SVG}<p>Nothing matched “${esc(q)}”.<br>Search looks through titles, highlights, comments, and full text.</p></div>`; return; }
+  list.innerHTML = '';
+  res.forEach(r => {
+    const li = document.createElement('li');
+    li.className = 'sr-row';
+    const counts = [];
+    if (r.counts.comments) counts.push(`${r.counts.comments} comment${r.counts.comments > 1 ? 's' : ''}`);
+    if (r.counts.highlights) counts.push(`${r.counts.highlights} highlight${r.counts.highlights > 1 ? 's' : ''}`);
+    li.innerHTML = `
+      <div class="sr-main">
+        <div class="sr-title">${highlightQ(titleWithoutTags(r.title) || 'Untitled', q)}
+          <span class="sr-badge ${r.matchType}">${SR_BADGE[r.matchType] || 'Match'}</span></div>
+        ${r.snippet ? `<div class="sr-snip">${highlightQ(r.snippet, q)}</div>` : ''}
+        ${counts.length ? `<div class="sr-counts">${counts.join(' · ')}</div>` : ''}
+      </div>
+      <div class="src-glyph">${SRC_GLYPH[r.sourceType] || 'DOC'}</div>`;
+    li.onclick = () => openReader(r.id, r.target);
+    list.appendChild(li);
+  });
+}
+
 async function addDocuments() {
   setSave('dirty');
   const res = await api.pickAndIngest();
@@ -729,7 +801,7 @@ async function refreshLibPill(cfg) {
 let currentReader = null;   // { id, meta, annos, base }
 let readTimer = null, unflushed = 0;
 
-async function openReader(id) {
+async function openReader(id, jumpTo) {
   const meta = await api.readMeta(id);
   const html = await api.readArticleHtml(id);
   const annos = await api.readAnnotations(id);
@@ -761,6 +833,27 @@ async function openReader(id) {
   renderTOC();
   restoreBookmark();
   startReadClock();
+
+  // jump to a search match (annotation or text), after layout settles
+  if (jumpTo) setTimeout(() => {
+    if (jumpTo.annoId) {
+      const a = (currentReader.annos.textAnnotations || []).find(x => x.id === jumpTo.annoId);
+      if (a && a.anchor) { scrollToAnchor(a.anchor, 'smooth'); focusAnno(jumpTo.annoId); return; }
+    }
+    if (jumpTo.text) scrollToText(jumpTo.text);
+  }, 80);
+}
+
+function scrollToText(q) {
+  if (!q) return false;
+  const body = $('#articleBody');
+  const { T, index } = buildIndex(body);
+  const i = T.toLowerCase().indexOf(String(q).toLowerCase());
+  if (i < 0) return false;
+  const loc = locate(index, i, false);
+  if (!loc) return false;
+  (loc.node.parentElement || loc.node).scrollIntoView({ behavior: 'smooth', block: 'center' });
+  return true;
 }
 
 function setWide(wide, rerender) {
