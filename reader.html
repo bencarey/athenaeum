@@ -152,10 +152,25 @@
   .reader-title:focus { color: var(--ink-max); }
   .reader-sub { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 12px; font-size: 11px; color: var(--ink-4); letter-spacing: 0.04em; font-variant-numeric: tabular-nums; text-transform: uppercase; }
   .reader-actions { display: flex; gap: 14px; align-items: center; }
-  .reader-topbar { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .reader-topbar { display: flex; align-items: center; gap: 12px; position: sticky; top: 0; z-index: 40; background: var(--read-bg); padding: 12px 0; margin-bottom: 4px; }
   .ptoggle { background: none; border: none; cursor: pointer; color: var(--ink-3); padding: 4px; display: inline-flex; border-radius: 7px; transition: color 100ms, background 100ms; }
   .ptoggle:hover { color: var(--ink); background: var(--surface); }
   .ptoggle.off { color: var(--ink-4); }
+  /* article tags */
+  .reader-tags { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-top: 14px; }
+  .rtag { display: inline-flex; align-items: center; gap: 2px; font-size: 11px; font-weight: 500; letter-spacing: 0.02em; padding: 3px 4px 3px 10px; border: 1px solid var(--line-strong); color: var(--ink-2); border-radius: 999px; }
+  .rtag-x { background: none; border: none; color: var(--ink-4); cursor: pointer; font-size: 13px; line-height: 1; padding: 0 3px; }
+  .rtag-x:hover { color: var(--ink); }
+  .rtag-add { background: none; border: 1px dashed var(--line-strong); color: var(--ink-4); cursor: pointer; font-size: 11px; padding: 3px 11px; border-radius: 999px; letter-spacing: 0.04em; }
+  .rtag-add:hover { color: var(--ink); border-color: var(--ink-3); }
+  .rtag-input { font: inherit; font-size: 11px; padding: 3px 10px; border: 1px solid var(--ink-3); border-radius: 999px; outline: none; background: var(--surface); color: var(--ink); width: 92px; }
+  /* end-of-article "mark read" prompt */
+  .read-prompt { position: fixed; left: 50%; transform: translateX(-50%); bottom: 26px; z-index: 600; display: none; align-items: center; gap: 10px; background: var(--ink-max); color: var(--on-ink); padding: 9px 11px 9px 18px; border-radius: 999px; box-shadow: 0 12px 34px rgba(0,0,0,0.28); font-size: 13px; }
+  .read-prompt.show { display: flex; }
+  .read-prompt button { font: inherit; font-size: 12px; font-weight: 600; border: none; border-radius: 999px; padding: 6px 14px; cursor: pointer; }
+  .read-prompt .rp-yes { background: var(--on-ink); color: var(--ink-max); }
+  .read-prompt .rp-no { background: transparent; color: var(--on-ink); opacity: 0.7; }
+  .read-prompt .rp-no:hover { opacity: 1; }
 
   /* rating */
   .rating-row { display: flex; align-items: center; gap: 14px; margin-top: 16px; }
@@ -355,6 +370,12 @@
 <body>
 <div class="drag-bar"></div>
 
+<div class="read-prompt" id="readPrompt">
+  <span>Reached the end — mark as read?</span>
+  <button class="rp-yes" id="rpYes">Mark read</button>
+  <button class="rp-no" id="rpNo">Not yet</button>
+</div>
+
 <div class="drop-overlay" id="dropOverlay">
   <div class="drop-card">
     <div class="drop-ic">↧</div>
@@ -416,7 +437,6 @@
       </div>
       <div class="reader-actions">
         <button class="btn--ghost" id="readBtn">Mark read</button>
-        <button class="btn--ghost" id="wideBtn">Wide</button>
         <button class="btn--ghost" id="deleteBtn">Delete</button>
       </div>
     </div>
@@ -424,6 +444,7 @@
       <span class="rating-label">Rating</span>
       <div class="rating" id="readerRating"></div>
     </div>
+    <div class="reader-tags" id="readerTags"></div>
     <div class="opener hidden" id="opener">
       <div class="opener-cover" id="openerCover"><img alt="Cover"></div>
       <div class="opener-meta">
@@ -546,7 +567,7 @@ function showView(name) {
   $('#view-' + name).classList.add('active');
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.toggle('active', b.dataset.view === name));
   document.body.classList.toggle('reading', name === 'reader');
-  document.body.classList.toggle('wide-page', name === 'reader' && !!loadPrefs().wide);
+  document.body.classList.toggle('wide-page', name === 'reader');
 }
 document.querySelectorAll('.nav-btn').forEach(b => b.onclick = () => {
   if (currentReader) leaveReader();
@@ -827,6 +848,7 @@ async function refreshLibPill(cfg) {
 // ==================================================================
 let currentReader = null;   // { id, meta, annos, base }
 let readTimer = null, unflushed = 0;
+let readPromptArmed = false;   // offer "mark read" once when the end is reached
 
 async function openReader(id, jumpTo) {
   const meta = await api.readMeta(id);
@@ -840,6 +862,7 @@ async function openReader(id, jumpTo) {
   renderReaderSub();
   renderRating();
   renderReadBtn();
+  renderTags();
 
   // body: rewrite relative image/asset urls to absolute file urls
   const baseUrl = 'file://' + encodeURI(base.replace(/\\/g, '/'));
@@ -853,13 +876,14 @@ async function openReader(id, jumpTo) {
   restoreHighlights();
 
   showView('reader');
-  setWide(!!loadPrefs().wide, false);
   applyPanels();
   renderRail();
   renderImagePins();
   renderTOC();
   restoreBookmark();
   startReadClock();
+  readPromptArmed = !meta.read;
+  $('#readPrompt').classList.remove('show');
 
   // jump to a search match (annotation or text), after layout settles
   if (jumpTo) setTimeout(() => {
@@ -883,16 +907,34 @@ function scrollToText(q) {
   return true;
 }
 
-function setWide(wide, rerender) {
-  $('#view-reader').classList.toggle('wide', wide);
-  document.body.classList.toggle('wide-page', wide && !!currentReader);
-  $('#wideBtn').textContent = wide ? 'Narrow' : 'Wide';
-  if (rerender && currentReader) { renderRail(); renderImagePins(); }
+// ---- article tags ----
+function renderTags() {
+  const wrap = $('#readerTags');
+  if (!currentReader) { wrap.innerHTML = ''; return; }
+  const tags = currentReader.meta.tags || [];
+  wrap.innerHTML = tags.map(t =>
+    `<span class="rtag">#${esc(t)}<button class="rtag-x" data-t="${esc(t)}" title="Remove tag">&times;</button></span>`
+  ).join('') + `<button class="rtag-add" id="rtagAdd">＋ tag</button>`;
+  wrap.querySelectorAll('.rtag-x').forEach(b => b.onclick = () => saveTags((currentReader.meta.tags || []).filter(x => x !== b.dataset.t)));
+  $('#rtagAdd').onclick = startTagInput;
 }
-$('#wideBtn').onclick = () => {
-  const p = loadPrefs(); p.wide = !p.wide; savePrefs(p);
-  setWide(p.wide, true);
-};
+function startTagInput() {
+  const inp = document.createElement('input');
+  inp.className = 'rtag-input'; inp.placeholder = 'tag…'; inp.spellcheck = false;
+  $('#rtagAdd').replaceWith(inp); inp.focus();
+  const commit = () => {
+    const v = (inp.value || '').trim().replace(/^#/, '').replace(/[^a-zA-Z0-9_-]+/g, '-').replace(/^-+|-+$/g, '');
+    if (v) saveTags([...new Set([...(currentReader.meta.tags || []), v])]);
+    else renderTags();
+  };
+  inp.onkeydown = (e) => { if (e.key === 'Enter') { e.preventDefault(); commit(); } else if (e.key === 'Escape') renderTags(); };
+  inp.onblur = commit;
+}
+async function saveTags(tags) {
+  currentReader.meta = await api.updateMeta(currentReader.id, { tags });
+  renderTags();
+  const a = articles.find(x => x.id === currentReader.id); if (a) a.tags = tags;
+}
 
 function applyPanels() {
   const p = loadPrefs();
@@ -1094,6 +1136,8 @@ window.addEventListener('beforeunload', flushReadTime);
 function leaveReader() {
   flushReadTime(); stopReadClock();
   hidePopover();
+  readPromptArmed = false;
+  $('#readPrompt').classList.remove('show');
   currentReader = null;
   loadLibrary();
 }
@@ -1429,6 +1473,50 @@ function assignHeadingIds() {
   $('#articleBody').querySelectorAll('h1,h2,h3').forEach((h, i) => { h.id = 'sec-' + i; });
 }
 
+// The major-section headings for the contents list: skip the document title (a
+// single leading h1) so the article's actual sections become the top level.
+function tocHeads() {
+  let heads = [...$('#articleBody').querySelectorAll('h1,h2,h3')];
+  const h1s = heads.filter(h => h.tagName === 'H1');
+  if (h1s.length === 1 && heads[0] && heads[0].tagName === 'H1') heads = heads.slice(1);
+  // drop a literal "Contents" heading, and any contents-page entry that the real
+  // section heading repeats later (keep the later, linkable one) — this de-noises
+  // documents whose contents page got transcribed as headings.
+  heads = heads.filter((h, i) => {
+    if (/^(table of\s+)?contents$/i.test(h.textContent.trim())) return false;
+    const t = h.textContent.trim().toLowerCase();
+    return !heads.slice(i + 1).some(o => o.textContent.trim().toLowerCase() === t);
+  });
+  return heads;
+}
+
+// If the article carries its own contents page (a "Contents" heading followed by
+// a list), use it — mapping each entry to the matching body heading — since it
+// reflects the author's intended structure better than raw headings.
+function inDocToc(heads) {
+  const all = [...$('#articleBody').querySelectorAll('h1,h2,h3')];
+  const ci = all.findIndex(h => /^(table of\s+)?contents$/i.test(h.textContent.trim()));
+  if (ci < 0) return null;
+  let el = all[ci].nextElementSibling, list = null;
+  for (let i = 0; i < 4 && el; i++, el = el.nextElementSibling) {
+    if (el.tagName === 'UL' || el.tagName === 'OL') { list = el; break; }
+    if (/^H[1-3]$/.test(el.tagName)) break;
+  }
+  if (!list) return null;
+  const items = [...list.querySelectorAll('li')]
+    .map(li => li.textContent.replace(/\s*\.*\s*\d+\s*$/, '').replace(/\s+/g, ' ').trim())
+    .filter(t => t.length > 1);
+  if (items.length < 3) return null;
+  const norm = s => s.toLowerCase().replace(/[^a-z0-9 ]/g, '').trim();
+  const entries = items.map(it => {
+    const key = norm(it);
+    const h = all.find((h, idx) => idx > ci && norm(h.textContent).startsWith(key.slice(0, Math.min(key.length, 36))));
+    return { text: it, id: h ? h.id : null };
+  });
+  if (entries.filter(e => e.id).length < Math.max(2, Math.ceil(items.length * 0.4))) return null;
+  return entries;
+}
+
 function buildHeadingTree(heads) {
   const root = { level: 0, children: [] };
   const stack = [root];
@@ -1456,7 +1544,6 @@ function renderTOC() {
   const toc = $('#toc');
   if (!currentReader) { toc.innerHTML = ''; return; }
   const body = $('#articleBody');
-  const heads = [...body.querySelectorAll('h1,h2,h3')];
   const figs = [...body.querySelectorAll('figure img')];
   let html = '';
 
@@ -1466,7 +1553,13 @@ function renderTOC() {
       <span>&#128278;</span><span class="bm-text">${esc(bm.label || bm.exact.slice(0, 42))}</span>
       <span class="bm-x" data-bm-remove="1" title="Remove bookmark">&times;</span></div>`;
   }
-  if (heads.length) {
+  const docToc = inDocToc();
+  const heads = tocHeads();
+  if (docToc) {
+    html += `<div class="toc-label">Contents</div><ul class="toc-list">` +
+      docToc.map(e => `<li class="toc-node"><div class="toc-item${e.id ? '' : ' nolink'}"${e.id ? ` data-sec="${e.id}"` : ''} title="${esc(e.text)}">` +
+        `<span class="toc-caret leaf"></span><span class="toc-text">${esc(e.text.slice(0, 90))}</span></div></li>`).join('') + `</ul>`;
+  } else if (heads.length) {
     html += `<div class="toc-label">Contents</div>` + renderTocNodes(buildHeadingTree(heads), true);
   }
   if (figs.length) {
@@ -1522,7 +1615,16 @@ window.addEventListener('scroll', () => {
     for (const h of heads) { if (h.getBoundingClientRect().top <= 130) cur = h; else break; }
     document.querySelectorAll('#toc .toc-item').forEach(it => it.classList.toggle('active', !!cur && it.dataset.sec === cur.id));
   });
+  // offer to mark read once the end of the article is reached
+  if (readPromptArmed && !currentReader.meta.read &&
+      window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 140) {
+    readPromptArmed = false;
+    $('#readPrompt').classList.add('show');
+  }
 }, { passive: true });
+
+$('#rpYes').onclick = () => { $('#readPrompt').classList.remove('show'); if (currentReader && !currentReader.meta.read) toggleRead(currentReader.meta); };
+$('#rpNo').onclick = () => $('#readPrompt').classList.remove('show');
 
 // ---- bookmark (set from a text selection, like highlight/comment) ----
 async function setBookmarkFromSelection(anchor) {

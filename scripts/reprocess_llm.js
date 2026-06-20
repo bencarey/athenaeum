@@ -94,8 +94,9 @@ function countWords(html) {
 const PROMPT = `You are transcribing one page of a PDF into clean, readable Markdown for a reading app. The real chart/figure images from this page are added separately, so your job is the TEXT. Rules:
 - Output ONLY Markdown for this page — no preamble, no commentary, no code fences.
 - Reproduce the page's text in natural reading order.
-- Use ## for section headings (reserve a single # for the document's main title on the very first page only). Body text as normal paragraphs. Lists as - or 1.. Block quotes with >.
-- Render genuine data tables, and any "Exhibit/Figure" that is fundamentally a data matrix or list, as a GitHub Markdown table or list. Keep the exhibit's title/caption as a heading above it.
+- Reserve a single # for the document's main title (first page only). Use ## ONLY for the document's genuine section titles — the handful you would list in a table of contents — and ### for real subsections. Do NOT make headings out of figure/exhibit captions, statistics, pull quotes, or short callout phrases; render those as normal text. Body text as normal paragraphs. Lists as - or 1.. Block quotes with >.
+- If a page is a stand-alone table of contents / index (section titles with page numbers), skip it entirely — output nothing for it; the app builds its own contents.
+- Render genuine data tables, and any "Exhibit/Figure" that is fundamentally a data matrix or list, as a GitHub Markdown table or list, with its title/caption in **bold** above it (not as a heading).
 - For a purely visual chart, diagram, photo, or decorative graphic: do NOT describe it and do NOT emit a placeholder — omit it entirely. The actual image will be inlined separately.
 - Render footnote/citation definitions as plain paragraphs that begin with the number then a space then the source, e.g. "7 Hannah Mayer, "Superagency in the workplace," McKinsey, 2025." Keep inline citation markers as plain numbers.
 - Omit running headers, footers, page numbers, and standalone copyright / source-watermark lines that repeat across pages.
