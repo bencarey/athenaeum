@@ -593,6 +593,75 @@ ipcMain.handle('ingest-paths', (_, paths) => ingestPaths(Array.isArray(paths) ? 
 
 ipcMain.handle('list-articles', () => listArticles());
 
+// Full-text search across the library. Ranks matches in the reader's own
+// annotations — comments first, then highlighted passages — above matches in the
+// article body, so a search surfaces what the user marked up before raw content.
+function snippetAround(text, q, pad = 90) {
+  const i = text.toLowerCase().indexOf(q);
+  if (i < 0) return text.slice(0, pad * 2);
+  const s = Math.max(0, i - pad), e = Math.min(text.length, i + q.length + pad);
+  return (s > 0 ? '…' : '') + text.slice(s, e).trim() + (e < text.length ? '…' : '');
+}
+ipcMain.handle('search-articles', (_, query) => {
+  ensureStore();
+  const raw = String(query || '').trim();
+  const q = raw.toLowerCase();
+  if (q.length < 2) return [];
+  const dir = articlesDir();
+  const out = [];
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return []; }
+  for (const id of names) {
+    let meta;
+    try { meta = JSON.parse(fs.readFileSync(path.join(dir, id, 'meta.json'), 'utf-8')); } catch { continue; }
+    let ann = { textAnnotations: [], imageAnnotations: [] };
+    try { ann = JSON.parse(fs.readFileSync(path.join(dir, id, 'annotations.json'), 'utf-8')); } catch {}
+    let content = '';
+    try {
+      content = fs.readFileSync(path.join(dir, id, 'article.html'), 'utf-8')
+        .replace(/<[^>]+>/g, ' ').replace(/&[a-z]+;/g, ' ').replace(/\s+/g, ' ').trim();
+    } catch {}
+    const title = meta.title || '';
+
+    let commentHit = null, hlHit = null, commentCount = 0, hlCount = 0;
+    for (const a of (ann.textAnnotations || [])) {
+      const note = a.comment || '';
+      const passage = (a.anchor && a.anchor.exact) || '';
+      if (note && note.toLowerCase().includes(q)) {
+        commentCount++;
+        if (!commentHit) commentHit = { id: a.id, text: note };
+      } else if (passage && passage.toLowerCase().includes(q)) {
+        hlCount++;
+        if (!hlHit) hlHit = { id: a.id, text: passage };
+      }
+    }
+    for (const a of (ann.imageAnnotations || [])) {
+      if (a.comment && a.comment.toLowerCase().includes(q)) {
+        commentCount++;
+        if (!commentHit) commentHit = { id: a.id, text: a.comment };
+      }
+    }
+    const titleHit = title.toLowerCase().includes(q);
+    const contentHit = content.toLowerCase().includes(q);
+    if (!commentHit && !hlHit && !titleHit && !contentHit) continue;
+
+    let matchType, snippet, target, base;
+    if (commentHit) { matchType = 'comment'; base = 1000; snippet = snippetAround(commentHit.text, q); target = { annoId: commentHit.id }; }
+    else if (hlHit) { matchType = 'highlight'; base = 600; snippet = snippetAround(hlHit.text, q); target = { annoId: hlHit.id }; }
+    else if (titleHit) { matchType = 'title'; base = 400; snippet = ''; target = { text: raw }; }
+    else { matchType = 'content'; base = 100; snippet = snippetAround(content, q); target = { text: raw }; }
+
+    out.push({
+      id, title, tags: meta.tags || [], sourceType: meta.sourceType || 'doc',
+      matchType, snippet, target,
+      counts: { comments: commentCount, highlights: hlCount },
+      score: base + commentCount * 25 + hlCount * 12 + (contentHit ? 1 : 0)
+    });
+  }
+  out.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title));
+  return out;
+});
+
 ipcMain.handle('get-stats', () => {
   ensureStore();
   const dir = articlesDir();
