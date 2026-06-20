@@ -574,8 +574,9 @@ async function generateSummary(text) {
         max_tokens: 400,
         messages: [{
           role: 'user',
-          content: 'Summarize this document in 2 to 3 sentences for a reading-app cover card, and identify the author or publishing source. ' +
-            'Respond with ONLY a JSON object: {"summary": "...", "author": "..."}. No preamble.\n\nDOCUMENT:\n' + text.slice(0, 12000)
+          content: 'Summarize this document in 2 to 3 sentences for a reading-app cover card. Also identify: ' +
+            '"author" (the writer(s), if named), and "source" (the publishing organization, company, or website it came from, as a SHORT clean name — e.g. "McKinsey & Company", "PitchBook", "The New York Times" — not a sentence). ' +
+            'Respond with ONLY a JSON object: {"summary": "...", "author": "...", "source": "..."}. No preamble.\n\nDOCUMENT:\n' + text.slice(0, 12000)
         }]
       })
     });
@@ -639,6 +640,7 @@ async function ingestFile(srcPath) {
     originalFile: 'original' + ext,
     cover: conv.cover || null,
     author: (ai && ai.author) || conv.author || '',
+    source: (ai && ai.source) || '',
     summary: (ai && ai.summary) || null,
     wordCount: words,
     readMinutes: Math.max(1, Math.ceil(words / 225)),
@@ -718,6 +720,7 @@ async function ingestUrl(rawUrl) {
     siteLogo,
     cover: null,
     author: (ai && ai.author) || conv.author || '',
+    source: (ai && ai.source) || conv.siteName || host,
     summary: (ai && ai.summary) || conv.excerpt || null,
     wordCount: words,
     readMinutes: Math.max(1, Math.ceil(words / 225)),
@@ -738,13 +741,21 @@ async function ingestUrl(rawUrl) {
   return meta;
 }
 
+function fileUrl(p) { return 'file://' + encodeURI(p.replace(/\\/g, '/')); }
+
 function listArticles() {
   ensureStore();
   const dir = articlesDir();
   const out = [];
   for (const name of fs.readdirSync(dir)) {
-    const mp = path.join(dir, name, 'meta.json');
-    try { out.push(JSON.parse(fs.readFileSync(mp, 'utf-8'))); } catch {}
+    const folder = path.join(dir, name);
+    let meta;
+    try { meta = JSON.parse(fs.readFileSync(path.join(folder, 'meta.json'), 'utf-8')); } catch { continue; }
+    // library thumbnail: a web article's site logo/favicon, else a PDF's rendered
+    // front page (cover). Resolved to an absolute file:// url the list can render.
+    const icon = (meta.sourceType === 'url' && meta.siteLogo) ? meta.siteLogo : (meta.cover || null);
+    meta.iconUrl = (icon && fs.existsSync(path.join(folder, icon))) ? fileUrl(path.join(folder, icon)) : null;
+    out.push(meta);
   }
   out.sort((a, b) => (b.ingestedAt || '').localeCompare(a.ingestedAt || ''));
   return out;
@@ -856,8 +867,11 @@ ipcMain.handle('search-articles', (_, query) => {
     else if (titleHit) { matchType = 'title'; base = 400; snippet = ''; target = { text: raw }; }
     else { matchType = 'content'; base = 100; snippet = snippetAround(content, q); target = { text: raw }; }
 
+    const icon = (meta.sourceType === 'url' && meta.siteLogo) ? meta.siteLogo : (meta.cover || null);
+    const iconUrl = (icon && fs.existsSync(path.join(dir, id, icon))) ? fileUrl(path.join(dir, id, icon)) : null;
     out.push({
       id, title, tags: meta.tags || [], sourceType: meta.sourceType || 'doc',
+      iconUrl, siteName: meta.siteName || '', source: meta.source || '', author: meta.author || '',
       matchType, snippet, target,
       counts: { comments: commentCount, highlights: hlCount },
       score: base + commentCount * 25 + hlCount * 12 + (contentHit ? 1 : 0)

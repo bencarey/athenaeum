@@ -109,7 +109,12 @@
 
   /* library list */
   .lib-list { list-style: none; }
-  .lib-row { display: grid; grid-template-columns: 46px 1fr auto; gap: 16px; align-items: center; padding: 16px 6px; border-bottom: 1px solid var(--line); cursor: pointer; transition: padding 120ms, background 120ms; }
+  .lib-row { display: grid; grid-template-columns: 50px 1fr auto; gap: 16px; align-items: center; padding: 16px 6px; border-bottom: 1px solid var(--line); cursor: pointer; transition: padding 120ms, background 120ms; }
+  .lib-thumb { display: flex; align-items: center; justify-content: center; }
+  .lib-icon { display: block; }
+  .lib-icon.cover { width: 42px; height: 54px; object-fit: cover; object-position: top center; border: 1px solid var(--line-faint); border-radius: 4px; background: var(--surface); }
+  .lib-icon.logo { width: 42px; height: 42px; object-fit: contain; border: 1px solid var(--line-faint); border-radius: 9px; background: var(--surface); padding: 6px; box-sizing: border-box; }
+  .lib-source { font-size: 11px; color: var(--ink-4); margin-top: 5px; letter-spacing: 0.02em; }
   .lib-row:hover { background: var(--surface); padding-left: 12px; }
   .src-glyph { font-family: var(--mono); font-size: 9px; font-weight: 600; letter-spacing: 0.08em; color: var(--ink-3); border: 1px solid var(--line-strong); border-radius: 4px; padding: 5px 0; text-align: center; }
   .lib-main .title { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); }
@@ -127,7 +132,7 @@
   .lib-search { width: 100%; box-sizing: border-box; margin: 0 0 22px; padding: 11px 16px; font: inherit; font-size: 14px; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 12px; outline: none; transition: border-color 120ms; -webkit-appearance: none; }
   .lib-search::placeholder { color: var(--ink-4); }
   .lib-search:focus { border-color: var(--line-strong); }
-  .sr-row { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: start; padding: 15px 6px; border-bottom: 1px solid var(--line); cursor: pointer; transition: padding 120ms, background 120ms; }
+  .sr-row { display: grid; grid-template-columns: 50px 1fr; gap: 16px; align-items: start; padding: 15px 6px; border-bottom: 1px solid var(--line); cursor: pointer; transition: padding 120ms, background 120ms; }
   .sr-row:hover { background: var(--surface); padding-left: 12px; }
   .sr-title { font-size: 15px; font-weight: 600; letter-spacing: -0.01em; color: var(--ink); margin-bottom: 5px; }
   .sr-snip { font-size: 13px; line-height: 1.5; color: var(--ink-3); }
@@ -600,6 +605,24 @@ function renderTagBar() {
   });
 }
 
+// thumbnail (PDF front page / site favicon) with text-glyph fallback, and the
+// source label (site for web articles, publisher for documents)
+function libIcon(a) {
+  if (a.iconUrl) {
+    const cls = a.sourceType === 'url' ? 'logo' : 'cover';
+    return `<img class="lib-icon ${cls}" src="${a.iconUrl}" alt="" loading="lazy"
+              onerror="this.outerHTML='&lt;div class=\\'src-glyph\\'&gt;${SRC_GLYPH[a.sourceType] || 'DOC'}&lt;/div&gt;'">`;
+  }
+  return `<div class="src-glyph">${SRC_GLYPH[a.sourceType] || 'DOC'}</div>`;
+}
+function hostOf(u) { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return ''; } }
+function libSource(a) {
+  if (a.sourceType === 'url') return a.siteName || hostOf(a.sourceUrl || '');
+  if (a.source) return a.source;
+  if (a.author) return String(a.author).split(/\s*[(—,]|\bconducted\b/i)[0].trim().slice(0, 48);
+  return '';
+}
+
 function renderLibrary() {
   const list = $('#libList');
   $('#libGreeting').style.display = articles.length ? '' : 'none';
@@ -631,11 +654,13 @@ function renderLibrary() {
     const readHtml = a.read
       ? `<span class="read-toggle on" title="Mark as unread">✓ Read</span>`
       : `${spentTxt}<span class="read-toggle" title="Mark as read">Mark read</span>`;
+    const src = libSource(a);
     li.innerHTML = `
-      <div class="src-glyph">${SRC_GLYPH[a.sourceType] || 'DOC'}</div>
+      <div class="lib-thumb">${libIcon(a)}</div>
       <div class="lib-main">
         <span class="title">${esc(titleWithoutTags(a.title)) || 'Untitled'}</span>
         ${tagHtml ? `<span class="tags">${tagHtml}</span>` : ''}
+        ${src ? `<div class="lib-source">${esc(src)}</div>` : ''}
       </div>
       <div class="lib-meta">
         ${rateHtml}
@@ -694,14 +719,16 @@ function renderSearchResults(res, q) {
     const counts = [];
     if (r.counts.comments) counts.push(`${r.counts.comments} comment${r.counts.comments > 1 ? 's' : ''}`);
     if (r.counts.highlights) counts.push(`${r.counts.highlights} highlight${r.counts.highlights > 1 ? 's' : ''}`);
+    const src = libSource(r);
     li.innerHTML = `
+      <div class="lib-thumb">${libIcon(r)}</div>
       <div class="sr-main">
         <div class="sr-title">${highlightQ(titleWithoutTags(r.title) || 'Untitled', q)}
           <span class="sr-badge ${r.matchType}">${SR_BADGE[r.matchType] || 'Match'}</span></div>
+        ${src ? `<div class="lib-source">${esc(src)}</div>` : ''}
         ${r.snippet ? `<div class="sr-snip">${highlightQ(r.snippet, q)}</div>` : ''}
         ${counts.length ? `<div class="sr-counts">${counts.join(' · ')}</div>` : ''}
-      </div>
-      <div class="src-glyph">${SRC_GLYPH[r.sourceType] || 'DOC'}</div>`;
+      </div>`;
     li.onclick = () => openReader(r.id, r.target);
     list.appendChild(li);
   });
