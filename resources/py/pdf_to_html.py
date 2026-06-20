@@ -363,12 +363,15 @@ def clean_raster_labels(page, fitz):
 
 def prep_llm(doc, out_dir, images_dir, fitz):
     """Prep for the LLM-vision pipeline. Render each page to a full image (which a
-    vision model transcribes into clean text), and rasterize the chart/exhibit
-    figure regions so the real visuals can be inlined alongside that text. Each
-    figure is tagged 'chart' (a pure visual — line/bar chart, diagram) or
-    'exhibit' (a designed graphic, often a data matrix the model may instead
-    transcribe as a table). No text extraction, and the page images are the
-    untouched originals (no redaction)."""
+    vision model transcribes into clean text), and collect the page's real visuals
+    so they can be inlined alongside that text, ordered top-to-bottom:
+      - chart/exhibit figure regions are rasterized (tagged 'chart' / 'exhibit');
+      - embedded raster images (photos, graphics, diagrams) are extracted (tagged
+        'image'), filtered to drop tiny icons, full-bleed page backgrounds, logos
+        or watermarks repeated across pages, and anything already covered by a
+        captured chart/exhibit.
+    No text extraction; the page images are the untouched originals."""
+    import collections
     page_count = doc.page_count
     warnings = []
     page_images = []
@@ -381,9 +384,22 @@ def prep_llm(doc, out_dir, images_dir, fitz):
             page_images.append(None)
             warnings.append(f"page {pno+1}: render failed ({str(e)[:50]})")
 
+    # how many pages each embedded image appears on (logos/watermarks repeat)
+    xref_pages = collections.defaultdict(set)
+    for pno in range(page_count):
+        try:
+            for info in doc[pno].get_image_info(xrefs=True):
+                xr = info.get("xref", 0)
+                if xr:
+                    xref_pages[xr].add(pno)
+        except Exception:
+            pass
+
     page_figs = {}
     for pno in range(page_count):
         page = doc[pno]
+        pw, ph = page.rect.width, page.rect.height
+        parea = pw * ph or 1
         try:
             found = page.find_tables().tables
         except Exception:
@@ -397,17 +413,65 @@ def prep_llm(doc, out_dir, images_dir, fitz):
         targets = [("exhibit", rc) for rc in exhibit_bands]
         targets += [("chart", expand_with_labels(page, rc)) for rc in charts if not in_band(rc)]
         targets += [("exhibit", (rc + (-10, -8, 10, 12)) & page.rect) for rc in exhibit_rects if not in_band(rc)]
-        figs = []
+
+        items = []          # (y0, {img, type}) — sorted into reading order below
+        captured = []       # rects already represented, to dedup embedded images
         for i, (typ, rc) in enumerate(targets):
             clip = (rc + (-4, -4, 4, 4)) & page.rect
             try:
                 fn = f"fig-{pno+1:03d}-{i+1}.png"
                 page.get_pixmap(clip=clip, dpi=150).save(os.path.join(images_dir, fn))
-                figs.append({"img": f"images/{fn}", "type": typ})
+                items.append((clip.y0, {"img": f"images/{fn}", "type": typ}))
+                captured.append(clip)
             except Exception as e:
                 warnings.append(f"page {pno+1}: raster failed ({str(e)[:50]})")
-        if figs:
-            page_figs[str(pno)] = figs
+
+        # embedded raster images (photos, graphics) the region detectors miss
+        seen = set()
+        try:
+            infos = page.get_image_info(xrefs=True)
+        except Exception:
+            infos = []
+        for info in infos:
+            xr = info.get("xref", 0)
+            if not xr or xr in seen:
+                continue
+            seen.add(xr)
+            bb = fitz.Rect(info["bbox"])
+            w, h = abs(bb.width), abs(bb.height)
+            frac = (w * h) / parea
+            if w < 64 or h < 64 or frac < 0.02 or frac > 0.85:
+                continue  # icon/logo, tiny, or full-bleed background
+            if len(xref_pages.get(xr, ())) > max(2, page_count * 0.4):
+                continue  # repeated header/footer logo or watermark
+            if any(_overlap_frac(bb, rc) > 0.5 or _overlap_frac(rc, bb) > 0.5 for rc in captured):
+                continue  # already captured as a chart/exhibit
+            try:
+                # Render the image through a Pixmap so the output is always a
+                # browser-safe format (raw embeds may be JPEG2000/CMYK, which
+                # Chromium can't show). JPEG keeps photos small; PNG preserves
+                # transparency. Downscale very large images for the reading view.
+                pix = fitz.Pixmap(doc, xr)
+                if pix.n - pix.alpha >= 4:        # CMYK / DeviceN -> RGB
+                    pix = fitz.Pixmap(fitz.csRGB, pix)
+                while max(pix.width, pix.height) > 1500:
+                    pix.shrink(1)                 # halve dimensions in place
+                if pix.alpha:
+                    data, extn = pix.tobytes(output="png"), "png"
+                else:
+                    data, extn = pix.tobytes(output="jpeg", jpg_quality=82), "jpg"
+                pix = None
+                fn = f"emb-{pno+1:03d}-{xr}.{extn}"
+                with open(os.path.join(images_dir, fn), "wb") as f:
+                    f.write(data)
+                items.append((bb.y0, {"img": f"images/{fn}", "type": "image"}))
+                captured.append(bb)
+            except Exception as e:
+                warnings.append(f"page {pno+1}: image extract failed ({str(e)[:50]})")
+
+        if items:
+            items.sort(key=lambda t: t[0])
+            page_figs[str(pno)] = [it[1] for it in items]
     return {"mode": "llm-prep", "pageCount": page_count,
             "pageImages": page_images, "figures": page_figs, "warnings": warnings}
 

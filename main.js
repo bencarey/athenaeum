@@ -536,7 +536,7 @@ async function convertPdfLlm(srcPath, imagesDir) {
     const md = pageMd[i] || '';
     const pf = figs[String(i)] || [];
     const hasTable = /(^|\n)\s*\|.*\|/.test(md);
-    const keep = pf.filter((f) => f.type === 'chart' || !hasTable);
+    const keep = pf.filter((f) => f.type === 'chart' || f.type === 'image' || !hasTable);
     const block = [md, keep.map((f) => `![](${f.img})`).join('\n\n')].filter(Boolean).join('\n\n');
     if (block.trim()) parts.push(block);
   }
